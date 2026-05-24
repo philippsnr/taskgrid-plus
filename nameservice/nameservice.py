@@ -29,16 +29,74 @@ def _response_header(message_type: str) -> taskgrid_pb2.MessageHeader:
     )
 
 
+_HEARTBEAT_TIMEOUT_SEC_DEFAULT = 30
+_OFFLINE_TIMEOUT_SEC_DEFAULT = 90
+
+
 class NameServiceServicer(taskgrid_pb2_grpc.NameServiceServicer):
     """gRPC servicer for the NameService (Namensdienst).
 
     Registry data model: worker_id → Worker (supports multiple workers per type).
     All public methods are thread-safe via a single RLock.
+    Background thread demotes workers to UNHEALTHY/OFFLINE when heartbeats stop.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        heartbeat_timeout_sec: int = _HEARTBEAT_TIMEOUT_SEC_DEFAULT,
+        offline_timeout_sec: int = _OFFLINE_TIMEOUT_SEC_DEFAULT,
+    ) -> None:
         self._lock = threading.RLock()
         self._registry: dict[str, taskgrid_pb2.Worker] = {}
+        self._heartbeat_timeout_ms = heartbeat_timeout_sec * 1000
+        self._offline_timeout_ms = offline_timeout_sec * 1000
+        self._stop_event = threading.Event()
+        self._health_thread = threading.Thread(
+            target=self._health_check_loop, daemon=True, name="health-checker"
+        )
+        self._health_thread.start()
+        logger.info(
+            event="HEALTH_CHECKER_STARTED",
+            heartbeat_timeout_sec=heartbeat_timeout_sec,
+            offline_timeout_sec=offline_timeout_sec,
+        )
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        self._health_thread.join(timeout=5)
+
+    # ── Background health checker ─────────────────────────────────────────────
+
+    def _health_check_loop(self) -> None:
+        while not self._stop_event.wait(timeout=1.0):
+            self._check_worker_health()
+
+    def _check_worker_health(self) -> None:
+        now = _now_ms()
+        with self._lock:
+            for worker_id, worker in list(self._registry.items()):
+                if worker.status == taskgrid_pb2.DRAINING:
+                    continue
+                elapsed = now - worker.last_heartbeat
+                if elapsed > self._offline_timeout_ms:
+                    new_status = taskgrid_pb2.OFFLINE
+                elif elapsed > self._heartbeat_timeout_ms:
+                    new_status = taskgrid_pb2.UNHEALTHY
+                else:
+                    continue
+                if new_status == worker.status:
+                    continue
+                self._registry[worker_id] = taskgrid_pb2.Worker(
+                    worker_id=worker.worker_id,
+                    type=worker.type,
+                    address=worker.address,
+                    port=worker.port,
+                    status=new_status,
+                    last_heartbeat=worker.last_heartbeat,
+                    current_load=worker.current_load,
+                )
+                event = "WORKER_OFFLINE" if new_status == taskgrid_pb2.OFFLINE else "WORKER_UNHEALTHY"
+                logger.warning(event=event, worker_id=worker_id, elapsed_ms=elapsed)
 
     # ── gRPC endpoints ────────────────────────────────────────────────────────
 
@@ -82,15 +140,19 @@ class NameServiceServicer(taskgrid_pb2_grpc.NameServiceServicer):
                     success=False,
                     message=f"unknown worker: {worker_id}",
                 )
+            recovered = worker.status == taskgrid_pb2.UNHEALTHY
+            new_status = taskgrid_pb2.ACTIVE if recovered else worker.status
             self._registry[worker_id] = taskgrid_pb2.Worker(
                 worker_id=worker.worker_id,
                 type=worker.type,
                 address=worker.address,
                 port=worker.port,
-                status=worker.status,
+                status=new_status,
                 last_heartbeat=_now_ms(),
                 current_load=request.current_load,
             )
+        if recovered:
+            logger.info(event="WORKER_RECOVERED", worker_id=worker_id)
         logger.debug(event="HEARTBEAT", worker_id=worker_id, current_load=request.current_load)
         return taskgrid_pb2.HeartbeatResponse(
             header=_response_header("HEARTBEAT_RESPONSE"),
