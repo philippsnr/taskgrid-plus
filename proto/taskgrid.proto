@@ -3,7 +3,7 @@ syntax = "proto3";
 package taskgrid;
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
-// PDF §5 — Task state model
+
 enum TaskStatus {
   TASK_STATUS_UNSPECIFIED = 0;
   CREATED     = 1;
@@ -16,7 +16,7 @@ enum TaskStatus {
   RETRYING    = 8;
 }
 
-// PDF §4.4 — Worker states in the Namensdienst
+// States managed by the Namensdienst based on heartbeat activity
 enum WorkerStatus {
   WORKER_STATUS_UNSPECIFIED = 0;
   ACTIVE    = 1;
@@ -26,7 +26,7 @@ enum WorkerStatus {
 }
 
 // ─── Core data structures ─────────────────────────────────────────────────────
-// PDF §10 — task_t equivalent
+
 message Task {
   int32      id                   = 1;
   string     type                 = 2;
@@ -40,7 +40,6 @@ message Task {
   string     assigned_worker      = 10;
 }
 
-// PDF §10 — worker_t equivalent
 message Worker {
   string       worker_id       = 1;
   string       type            = 2;
@@ -52,10 +51,10 @@ message Worker {
 }
 
 // ─── Message envelope ─────────────────────────────────────────────────────────
-// PDF §9 — every message must carry these fields
+// Included in every request and response for tracing and correlation.
 message MessageHeader {
   string message_type = 1;
-  string request_id   = 2;  // correlation_id for tracing (PDF §13)
+  string request_id   = 2;  // correlation_id for end-to-end tracing
   int64  timestamp    = 3;  // unix epoch ms
   string sender       = 4;
 }
@@ -72,7 +71,7 @@ service DispatcherService {
   rpc GetDispatcherStatus   (GetStatusRequest)      returns (GetStatusResponse);
 }
 
-// POST_TASK — Client → Dispatcher (PDF §9.1)
+// POST_TASK — Client → Dispatcher
 message PostTaskRequest {
   MessageHeader header  = 1;
   string        type    = 2;
@@ -86,7 +85,7 @@ message PostTaskResponse {
   string        message = 4;  // error description if success=false
 }
 
-// GET_RESULT — Client → Dispatcher (PDF §9.2)
+// GET_RESULT — Client → Dispatcher
 message GetResultRequest {
   MessageHeader header  = 1;
   int32         task_id = 2;
@@ -101,7 +100,7 @@ message GetResultResponse {
   string        message = 6;
 }
 
-// RESULT_RETURN — Worker → Dispatcher (PDF §9.3)
+// RESULT_RETURN — Worker → Dispatcher
 message ReturnResultRequest {
   MessageHeader header        = 1;
   int32         task_id       = 2;
@@ -117,7 +116,7 @@ message ReturnResultResponse {
   string        message = 3;
 }
 
-// GET_STATUS — Monitoring → Dispatcher (PDF §9.8, §4.5)
+// GET_STATUS — Monitoring → Dispatcher or Namensdienst
 message GetStatusRequest {
   MessageHeader header = 1;
 }
@@ -149,7 +148,7 @@ service NameService {
   rpc GetNameServiceStatus(GetStatusRequest)         returns (GetStatusResponse);
 }
 
-// REGISTER_WORKER — Worker → Namensdienst (PDF §9.4)
+// REGISTER_WORKER — Worker → Namensdienst
 message RegisterWorkerRequest {
   MessageHeader header    = 1;
   string        worker_id = 2;
@@ -165,7 +164,7 @@ message RegisterWorkerResponse {
   string        message = 3;
 }
 
-// HEARTBEAT — Worker → Namensdienst (PDF §9.5)
+// HEARTBEAT — Worker → Namensdienst
 message HeartbeatRequest {
   MessageHeader header       = 1;
   string        worker_id    = 2;
@@ -179,7 +178,7 @@ message HeartbeatResponse {
   string        message = 3;
 }
 
-// LOOKUP_WORKER — Dispatcher → Namensdienst (PDF §9.6)
+// LOOKUP_WORKER — Dispatcher → Namensdienst
 message LookupWorkerRequest {
   MessageHeader header = 1;
   string        type   = 2;
@@ -192,7 +191,7 @@ message LookupWorkerResponse {
   string          message = 4;
 }
 
-// DEREGISTER_WORKER — Worker → Namensdienst (PDF §9.7)
+// DEREGISTER_WORKER — Worker → Namensdienst
 message DeregisterWorkerRequest {
   MessageHeader header    = 1;
   string        worker_id = 2;
@@ -207,7 +206,7 @@ message DeregisterWorkerResponse {
 // ─── Worker service ───────────────────────────────────────────────────────────
 // Hosted by each Worker container.
 // Dispatcher calls ProcessTask to hand off a task.
-// Workers must NOT be called by the Client directly (PDF §4.3).
+// Workers must NOT be called by the Client directly.
 service WorkerService {
   rpc ProcessTask (ProcessTaskRequest) returns (ProcessTaskResponse);
 }
