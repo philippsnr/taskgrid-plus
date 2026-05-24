@@ -1,0 +1,225 @@
+syntax = "proto3";
+
+package taskgrid;
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+// PDF §5 — Task state model
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  CREATED     = 1;
+  QUEUED      = 2;
+  DISPATCHED  = 3;
+  PROCESSING  = 4;
+  COMPLETED   = 5;
+  FAILED      = 6;
+  TIMEOUT     = 7;
+  RETRYING    = 8;
+}
+
+// PDF §4.4 — Worker states in the Namensdienst
+enum WorkerStatus {
+  WORKER_STATUS_UNSPECIFIED = 0;
+  ACTIVE    = 1;
+  UNHEALTHY = 2;
+  DRAINING  = 3;
+  OFFLINE   = 4;
+}
+
+// ─── Core data structures ─────────────────────────────────────────────────────
+// PDF §10 — task_t equivalent
+message Task {
+  int32      id                   = 1;
+  string     type                 = 2;
+  string     payload              = 3;
+  string     result               = 4;
+  TaskStatus status               = 5;
+  int64      timestamp_created    = 6;  // unix epoch ms
+  int64      timestamp_dispatched = 7;
+  int64      timestamp_completed  = 8;
+  int32      retry_count          = 9;
+  string     assigned_worker      = 10;
+}
+
+// PDF §10 — worker_t equivalent
+message Worker {
+  string       worker_id       = 1;
+  string       type            = 2;
+  string       address         = 3;
+  int32        port            = 4;
+  WorkerStatus status          = 5;
+  int64        last_heartbeat  = 6;  // unix epoch ms
+  int32        current_load    = 7;
+}
+
+// ─── Message envelope ─────────────────────────────────────────────────────────
+// PDF §9 — every message must carry these fields
+message MessageHeader {
+  string message_type = 1;
+  string request_id   = 2;  // correlation_id for tracing (PDF §13)
+  int64  timestamp    = 3;  // unix epoch ms
+  string sender       = 4;
+}
+
+// ─── Dispatcher service ───────────────────────────────────────────────────────
+// Hosted by the Dispatcher container.
+// Clients call PostTask / GetResult.
+// Workers call ReturnResult.
+// Monitoring calls GetDispatcherStatus.
+service DispatcherService {
+  rpc PostTask              (PostTaskRequest)       returns (PostTaskResponse);
+  rpc GetResult             (GetResultRequest)      returns (GetResultResponse);
+  rpc ReturnResult          (ReturnResultRequest)   returns (ReturnResultResponse);
+  rpc GetDispatcherStatus   (GetStatusRequest)      returns (GetStatusResponse);
+}
+
+// POST_TASK — Client → Dispatcher (PDF §9.1)
+message PostTaskRequest {
+  MessageHeader header  = 1;
+  string        type    = 2;
+  string        payload = 3;
+}
+
+message PostTaskResponse {
+  MessageHeader header  = 1;
+  bool          success = 2;
+  int32         task_id = 3;
+  string        message = 4;  // error description if success=false
+}
+
+// GET_RESULT — Client → Dispatcher (PDF §9.2)
+message GetResultRequest {
+  MessageHeader header  = 1;
+  int32         task_id = 2;
+}
+
+message GetResultResponse {
+  MessageHeader header  = 1;
+  bool          success = 2;
+  int32         task_id = 3;
+  string        result  = 4;
+  TaskStatus    status  = 5;
+  string        message = 6;
+}
+
+// RESULT_RETURN — Worker → Dispatcher (PDF §9.3)
+message ReturnResultRequest {
+  MessageHeader header        = 1;
+  int32         task_id       = 2;
+  string        result        = 3;
+  string        worker_id     = 4;
+  bool          success       = 5;  // false if worker encountered a processing error
+  string        error_message = 6;
+}
+
+message ReturnResultResponse {
+  MessageHeader header  = 1;
+  bool          success = 2;
+  string        message = 3;
+}
+
+// GET_STATUS — Monitoring → Dispatcher (PDF §9.8, §4.5)
+message GetStatusRequest {
+  MessageHeader header = 1;
+}
+
+message GetStatusResponse {
+  MessageHeader   header                 = 1;
+  int32           workers_registered     = 2;
+  int32           workers_active         = 3;
+  repeated string supported_task_types   = 4;
+  int32           tasks_queued           = 5;
+  int32           tasks_running          = 6;
+  int32           tasks_completed        = 7;
+  int32           tasks_failed           = 8;
+  double          avg_processing_time_ms = 9;
+  int32           total_timeouts         = 10;
+  int32           total_retries          = 11;
+}
+
+// ─── Name service ─────────────────────────────────────────────────────────────
+// Hosted by the Namensdienst container.
+// Workers call Register / Heartbeat / Deregister.
+// Dispatcher calls Lookup.
+// Monitoring calls GetNameServiceStatus.
+service NameService {
+  rpc RegisterWorker      (RegisterWorkerRequest)    returns (RegisterWorkerResponse);
+  rpc Heartbeat           (HeartbeatRequest)         returns (HeartbeatResponse);
+  rpc LookupWorker        (LookupWorkerRequest)      returns (LookupWorkerResponse);
+  rpc DeregisterWorker    (DeregisterWorkerRequest)  returns (DeregisterWorkerResponse);
+  rpc GetNameServiceStatus(GetStatusRequest)         returns (GetStatusResponse);
+}
+
+// REGISTER_WORKER — Worker → Namensdienst (PDF §9.4)
+message RegisterWorkerRequest {
+  MessageHeader header    = 1;
+  string        worker_id = 2;
+  string        type      = 3;
+  string        address   = 4;
+  int32         port      = 5;
+  int32         capacity  = 6;  // optional: max concurrent tasks
+}
+
+message RegisterWorkerResponse {
+  MessageHeader header  = 1;
+  bool          success = 2;
+  string        message = 3;
+}
+
+// HEARTBEAT — Worker → Namensdienst (PDF §9.5)
+message HeartbeatRequest {
+  MessageHeader header       = 1;
+  string        worker_id    = 2;
+  int64         timestamp    = 3;
+  int32         current_load = 4;  // optional: number of tasks currently processing
+}
+
+message HeartbeatResponse {
+  MessageHeader header  = 1;
+  bool          success = 2;
+  string        message = 3;
+}
+
+// LOOKUP_WORKER — Dispatcher → Namensdienst (PDF §9.6)
+message LookupWorkerRequest {
+  MessageHeader header = 1;
+  string        type   = 2;
+}
+
+message LookupWorkerResponse {
+  MessageHeader   header  = 1;
+  bool            success = 2;
+  repeated Worker workers = 3;  // all ACTIVE workers for the requested type
+  string          message = 4;
+}
+
+// DEREGISTER_WORKER — Worker → Namensdienst (PDF §9.7)
+message DeregisterWorkerRequest {
+  MessageHeader header    = 1;
+  string        worker_id = 2;
+}
+
+message DeregisterWorkerResponse {
+  MessageHeader header  = 1;
+  bool          success = 2;
+  string        message = 3;
+}
+
+// ─── Worker service ───────────────────────────────────────────────────────────
+// Hosted by each Worker container.
+// Dispatcher calls ProcessTask to hand off a task.
+// Workers must NOT be called by the Client directly (PDF §4.3).
+service WorkerService {
+  rpc ProcessTask (ProcessTaskRequest) returns (ProcessTaskResponse);
+}
+
+// DISPATCH_TASK — Dispatcher → Worker
+message ProcessTaskRequest {
+  MessageHeader header = 1;
+  Task          task   = 2;
+}
+
+message ProcessTaskResponse {
+  MessageHeader header   = 1;
+  bool          accepted = 2;  // true if worker accepted the task
+  string        message  = 3;
+}
