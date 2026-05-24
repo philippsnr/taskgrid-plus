@@ -1,33 +1,151 @@
 import os
 import sys
+import threading
+import time
+import uuid
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "proto"))
 
+import grpc
+
+import taskgrid_pb2
+import taskgrid_pb2_grpc
 from common.logger import get_logger
 
 logger = get_logger("nameservice")
 
 
-class NameService:
-    # ── Worker registration ───────────────────────────────────────────────────
+def _now_ms() -> int:
+    return int(time.time() * 1000)
 
-    def on_worker_registered(self, request_id: str, worker_id: str, worker_type: str, address: str, port: int) -> None:
-        logger.info(request_id=request_id, event="REGISTERED", worker_id=worker_id, type=worker_type, address=address, port=port)
 
-    def on_worker_deregistered(self, request_id: str, worker_id: str) -> None:
+def _response_header(message_type: str) -> taskgrid_pb2.MessageHeader:
+    return taskgrid_pb2.MessageHeader(
+        message_type=message_type,
+        request_id=str(uuid.uuid4()),
+        timestamp=_now_ms(),
+        sender="nameservice",
+    )
+
+
+class NameServiceServicer(taskgrid_pb2_grpc.NameServiceServicer):
+    """gRPC servicer for the NameService (Namensdienst).
+
+    Registry data model: worker_id → Worker (supports multiple workers per type).
+    All public methods are thread-safe via a single RLock.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._registry: dict[str, taskgrid_pb2.Worker] = {}
+
+    # ── gRPC endpoints ────────────────────────────────────────────────────────
+
+    def RegisterWorker(self, request, context):
+        request_id = request.header.request_id
+        is_update: bool
+        with self._lock:
+            is_update = request.worker_id in self._registry
+            self._registry[request.worker_id] = taskgrid_pb2.Worker(
+                worker_id=request.worker_id,
+                type=request.type,
+                address=request.address,
+                port=request.port,
+                status=taskgrid_pb2.ACTIVE,
+                last_heartbeat=_now_ms(),
+                current_load=0,
+            )
+        event = "RE_REGISTERED" if is_update else "REGISTERED"
+        logger.info(
+            request_id=request_id,
+            event=event,
+            worker_id=request.worker_id,
+            type=request.type,
+            address=request.address,
+            port=request.port,
+        )
+        return taskgrid_pb2.RegisterWorkerResponse(
+            header=_response_header("REGISTER_WORKER_RESPONSE"),
+            success=True,
+            message="",
+        )
+
+    def Heartbeat(self, request, context):
+        worker_id = request.worker_id
+        with self._lock:
+            worker = self._registry.get(worker_id)
+            if worker is None:
+                logger.warning(event="HEARTBEAT_UNKNOWN", worker_id=worker_id)
+                return taskgrid_pb2.HeartbeatResponse(
+                    header=_response_header("HEARTBEAT_RESPONSE"),
+                    success=False,
+                    message=f"unknown worker: {worker_id}",
+                )
+            self._registry[worker_id] = taskgrid_pb2.Worker(
+                worker_id=worker.worker_id,
+                type=worker.type,
+                address=worker.address,
+                port=worker.port,
+                status=worker.status,
+                last_heartbeat=_now_ms(),
+                current_load=request.current_load,
+            )
+        logger.debug(event="HEARTBEAT", worker_id=worker_id, current_load=request.current_load)
+        return taskgrid_pb2.HeartbeatResponse(
+            header=_response_header("HEARTBEAT_RESPONSE"),
+            success=True,
+            message="",
+        )
+
+    def LookupWorker(self, request, context):
+        request_id = request.header.request_id
+        worker_type = request.type
+        with self._lock:
+            matches = [
+                w
+                for w in self._registry.values()
+                if w.type == worker_type and w.status == taskgrid_pb2.ACTIVE
+            ]
+        logger.debug(
+            request_id=request_id, event="LOOKUP", type=worker_type, matches=len(matches)
+        )
+        return taskgrid_pb2.LookupWorkerResponse(
+            header=_response_header("LOOKUP_WORKER_RESPONSE"),
+            success=True,
+            workers=matches,
+            message="",
+        )
+
+    def DeregisterWorker(self, request, context):
+        request_id = request.header.request_id
+        worker_id = request.worker_id
+        with self._lock:
+            removed = self._registry.pop(worker_id, None)
+        if removed is None:
+            logger.warning(
+                request_id=request_id, event="DEREGISTER_UNKNOWN", worker_id=worker_id
+            )
+            return taskgrid_pb2.DeregisterWorkerResponse(
+                header=_response_header("DEREGISTER_WORKER_RESPONSE"),
+                success=False,
+                message=f"unknown worker: {worker_id}",
+            )
         logger.info(request_id=request_id, event="DEREGISTERED", worker_id=worker_id)
+        return taskgrid_pb2.DeregisterWorkerResponse(
+            header=_response_header("DEREGISTER_WORKER_RESPONSE"),
+            success=True,
+            message="",
+        )
 
-    # ── Heartbeat ─────────────────────────────────────────────────────────────
-
-    def on_heartbeat_received(self, worker_id: str, current_load: int) -> None:
-        logger.debug(event="HEARTBEAT", worker_id=worker_id, current_load=current_load)
-
-    # ── State changes ─────────────────────────────────────────────────────────
-
-    def on_worker_state_changed(self, worker_id: str, old_state: str, new_state: str) -> None:
-        logger.warning(event="STATE_CHANGE", worker_id=worker_id, old_state=old_state, new_state=new_state)
-
-    # ── Lookup ────────────────────────────────────────────────────────────────
-
-    def on_lookup(self, request_id: str, worker_type: str, matches: int) -> None:
-        logger.debug(request_id=request_id, event="LOOKUP", type=worker_type, matches=matches)
+    def GetNameServiceStatus(self, request, context):
+        with self._lock:
+            workers = list(self._registry.values())
+        active = [w for w in workers if w.status == taskgrid_pb2.ACTIVE]
+        types = sorted({w.type for w in active})
+        return taskgrid_pb2.GetStatusResponse(
+            header=_response_header("GET_STATUS_RESPONSE"),
+            workers_registered=len(workers),
+            workers_active=len(active),
+            supported_task_types=types,
+        )
