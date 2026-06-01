@@ -14,21 +14,15 @@ To add a new task type:
 """
 
 import hashlib
-import json
-import re
 import time
 
 
 def handle_reverse(payload: str) -> tuple[bool, str]:
     """Reverse the input string.
-    
+
     Example: "hello" → "olleh"
     """
-    try:
-        result = payload[::-1]
-        return True, result
-    except Exception as e:
-        return False, f"Reverse failed: {str(e)}"
+    return True, payload[::-1]
 
 
 def handle_sum(payload: str) -> tuple[bool, str]:
@@ -53,39 +47,28 @@ def handle_sum(payload: str) -> tuple[bool, str]:
             return False, "No valid numbers found"
         
         total = sum(numbers)
-        
-        # Return as int if whole number, else as float
-        if total == int(total):
+
+        if total.is_integer():
             return True, str(int(total))
-        else:
-            return True, str(total)
+        return True, str(total)
     except Exception as e:
         return False, f"Sum failed: {str(e)}"
 
 
 def handle_hash(payload: str) -> tuple[bool, str]:
     """Compute SHA-256 hash of the payload.
-    
+
     Example: "hello" → "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
     """
-    try:
-        hash_obj = hashlib.sha256(payload.encode('utf-8'))
-        result = hash_obj.hexdigest()
-        return True, result
-    except Exception as e:
-        return False, f"Hash failed: {str(e)}"
+    return True, hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
 
 def handle_upper(payload: str) -> tuple[bool, str]:
     """Convert string to uppercase.
-    
+
     Example: "hello world" → "HELLO WORLD"
     """
-    try:
-        result = payload.upper()
-        return True, result
-    except Exception as e:
-        return False, f"Upper failed: {str(e)}"
+    return True, payload.upper()
 
 
 def handle_wait(payload: str) -> tuple[bool, str]:
@@ -117,11 +100,9 @@ def handle_wait(payload: str) -> tuple[bool, str]:
         # Sleep for the specified duration
         time.sleep(seconds)
         
-        # Return confirmation
-        if seconds == int(seconds):
+        if seconds.is_integer():
             return True, f"waited {int(seconds)}s"
-        else:
-            return True, f"waited {seconds}s"
+        return True, f"waited {seconds}s"
     except Exception as e:
         return False, f"Wait failed: {str(e)}"
 

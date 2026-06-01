@@ -44,12 +44,10 @@ class TaskWorker(Worker):
     """
 
     def process_task(self, task: taskgrid_pb2.Task, request_id: str) -> tuple[bool, str]:
-        """Process a task by dispatching to the appropriate handler.
-        
-        The handler is determined by task.type (should match this worker's WORKER_TYPE).
-        """
+        """Process a task by dispatching to the appropriate handler."""
+        if task.type != self._worker_type:
+            return False, f"Task type mismatch: expected {self._worker_type}, got {task.type}"
         try:
-            # Dispatch to handler
             return handle_task(task.type, task.payload)
         except Exception as e:
             return False, f"Task processing failed: {str(e)}"

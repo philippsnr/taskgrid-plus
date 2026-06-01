@@ -331,13 +331,15 @@ class Worker:
     ) -> None:
         """Send result back to Dispatcher."""
         try:
-            if self._dispatcher_stub is None:
-                self._dispatcher_channel = grpc.insecure_channel(
-                    f"{self._dispatcher_address}:{self._dispatcher_port}"
-                )
-                self._dispatcher_stub = taskgrid_pb2_grpc.DispatcherServiceStub(
-                    self._dispatcher_channel
-                )
+            with self._lock:
+                if self._dispatcher_stub is None:
+                    self._dispatcher_channel = grpc.insecure_channel(
+                        f"{self._dispatcher_address}:{self._dispatcher_port}"
+                    )
+                    self._dispatcher_stub = taskgrid_pb2_grpc.DispatcherServiceStub(
+                        self._dispatcher_channel
+                    )
+                stub = self._dispatcher_stub
 
             request = taskgrid_pb2.ReturnResultRequest(
                 header=_response_header("RETURN_RESULT"),
@@ -347,7 +349,7 @@ class Worker:
                 success=success,
                 error_message="" if success else result,
             )
-            response = self._dispatcher_stub.ReturnResult(request, timeout=10)
+            response = stub.ReturnResult(request, timeout=10)
 
             if not response.success:
                 self._logger.warning(
@@ -443,10 +445,11 @@ class Worker:
 
     def is_ready(self) -> bool:
         """Return True if worker is accepting tasks."""
-        return (
-            self._current_load < self._capacity
-            and not self._stop_event.is_set()
-        )
+        with self._lock:
+            return (
+                self._current_load < self._capacity
+                and not self._stop_event.is_set()
+            )
 
 
 class _WorkerServicer(taskgrid_pb2_grpc.WorkerServiceServicer):
@@ -464,20 +467,31 @@ class _WorkerServicer(taskgrid_pb2_grpc.WorkerServiceServicer):
         request_id = request.header.request_id
         task = request.task
 
-        # Check if worker is ready
-        if not self._worker.is_ready():
-            self._worker._logger.warning(
-                request_id=request_id,
-                task_id=task.id,
-                event="REJECTED_NOT_READY",
-                current_load=self._worker.get_load(),
-                capacity=self._worker._capacity,
-            )
-            return taskgrid_pb2.ProcessTaskResponse(
-                header=_response_header("PROCESS_TASK_RESPONSE"),
-                accepted=False,
-                message=f"Worker at capacity or shutting down",
-            )
+        thread = threading.Thread(
+            target=self._worker._process_task_background,
+            args=(task, request_id),
+            daemon=True,
+            name=f"task-{task.id}",
+        )
+
+        # Check capacity and register atomically to prevent TOCTOU overshoot
+        with self._worker._lock:
+            if (self._worker._current_load >= self._worker._capacity
+                    or self._worker._stop_event.is_set()):
+                self._worker._logger.warning(
+                    request_id=request_id,
+                    task_id=task.id,
+                    event="REJECTED_NOT_READY",
+                    current_load=self._worker._current_load,
+                    capacity=self._worker._capacity,
+                )
+                return taskgrid_pb2.ProcessTaskResponse(
+                    header=_response_header("PROCESS_TASK_RESPONSE"),
+                    accepted=False,
+                    message="Worker at capacity or shutting down",
+                )
+            self._worker._current_load += 1
+            self._worker._task_threads[task.id] = thread
 
         self._worker._logger.info(
             request_id=request_id,
@@ -486,16 +500,17 @@ class _WorkerServicer(taskgrid_pb2_grpc.WorkerServiceServicer):
             type=task.type,
         )
 
-        thread = threading.Thread(
-            target=self._worker._process_task_background,
-            args=(task, request_id),
-            daemon=True,
-            name=f"task-{task.id}",
-        )
-        with self._worker._lock:
-            self._worker._current_load += 1
-            self._worker._task_threads[task.id] = thread
-        thread.start()
+        try:
+            thread.start()
+        except RuntimeError as e:
+            with self._worker._lock:
+                self._worker._current_load -= 1
+                self._worker._task_threads.pop(task.id, None)
+            return taskgrid_pb2.ProcessTaskResponse(
+                header=_response_header("PROCESS_TASK_RESPONSE"),
+                accepted=False,
+                message=f"Failed to start task thread: {e}",
+            )
 
         return taskgrid_pb2.ProcessTaskResponse(
             header=_response_header("PROCESS_TASK_RESPONSE"),
