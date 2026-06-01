@@ -379,12 +379,22 @@ class Dispatcher:
             logger.error(request_id=request_id, task_id=task_id, event="NAMESERVICE_ERROR", error=str(e.details()))
             return None
 
+        # Safety filter: keep only ACTIVE workers (NameService should already filter,
+        # but this guards against stale registrations slipping through).
         active_workers = [w for w in response.workers if w.status == taskgrid_pb2.ACTIVE]
         if not active_workers:
+            # Edge case: all known workers are UNHEALTHY or OFFLINE — do not dispatch.
             self.on_no_worker_available(request_id, task_id, task_type)
             return None
 
-        # On retry: prefer a different worker than the one that timed out
+        # Selection strategy: Least Load
+        # Among the active candidates we pick the worker reporting the lowest
+        # current_load.  This spreads work across heterogeneous workers without
+        # requiring coordinated state between dispatcher instances.
+        #
+        # On retry: exclude the worker that caused the previous timeout so the
+        # task is handed to a different node when possible.  If only one worker
+        # exists, we fall back to using it anyway.
         preferred = [w for w in active_workers if w.worker_id != exclude_worker]
         candidates = preferred if preferred else active_workers
         selected = min(candidates, key=lambda w: w.current_load)
