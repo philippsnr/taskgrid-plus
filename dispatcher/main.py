@@ -67,6 +67,8 @@ class DispatcherServicer(taskgrid_pb2_grpc.DispatcherServiceServicer):
 def serve() -> None:
     port = int(os.environ.get("DISPATCHER_PORT", 50051))
     nameservice_addr = os.environ.get("NAMESERVICE_ADDR", "nameservice:50052")
+    task_timeout_sec = int(os.environ.get("TASK_TIMEOUT_SEC", 60))
+    max_retries = int(os.environ.get("MAX_RETRIES", 3))
 
     dispatcher = Dispatcher()
 
@@ -79,7 +81,7 @@ def serve() -> None:
     logger.info(event="DISPATCHER_STARTING", port=port, nameservice_addr=nameservice_addr)
     server.start()
 
-    dispatcher.start_dispatch_loop(nameservice_addr)
+    dispatcher.start_dispatch_loop(nameservice_addr, task_timeout_sec=task_timeout_sec, max_retries=max_retries)
 
     logger.info(event="DISPATCHER_READY", port=port)
 
