@@ -99,6 +99,11 @@ class Dispatcher:
         # worker_id → grpc.Channel (cached, reused across dispatches)
         self._worker_channels: Dict[str, grpc.Channel] = {}
         self._worker_channels_lock = threading.Lock()
+        # shared nameservice stub (lazy-init, thread-safe via lock)
+        self._nameservice_addr: Optional[str] = None
+        self._nameservice_channel: Optional[grpc.Channel] = None
+        self._nameservice_stub: Optional[taskgrid_pb2_grpc.NameServiceStub] = None
+        self._nameservice_lock = threading.Lock()
 
     def _allocate_task_id(self) -> int:
         with self._id_lock:
@@ -143,11 +148,25 @@ class Dispatcher:
     def on_worker_selected(self, request_id: str, task_id: int, worker_id: str, strategy: str) -> None:
         logger.debug(request_id=request_id, task_id=task_id, event="WORKER_SELECTED", worker=worker_id, strategy=strategy)
 
+    def on_unknown_task_type(self, request_id: str, task_type: str) -> None:
+        logger.error(request_id=request_id, event="UNKNOWN_TASK_TYPE", type=task_type)
+
     def on_no_worker_available(self, request_id: str, task_id: int, task_type: str) -> None:
         logger.warning(request_id=request_id, task_id=task_id, event="NO_WORKER", type=task_type)
 
     def on_result_received(self, request_id: str, task_id: int, worker_id: str, success: bool) -> None:
         logger.info(request_id=request_id, task_id=task_id, event="RESULT_RECEIVED", worker=worker_id, success=success)
+
+    # ── Nameservice stub ──────────────────────────────────────────────────────
+
+    def _get_nameservice_stub(self) -> Optional[taskgrid_pb2_grpc.NameServiceStub]:
+        with self._nameservice_lock:
+            if self._nameservice_stub is None:
+                if self._nameservice_addr is None:
+                    return None
+                self._nameservice_channel = grpc.insecure_channel(self._nameservice_addr)
+                self._nameservice_stub = taskgrid_pb2_grpc.NameServiceStub(self._nameservice_channel)
+            return self._nameservice_stub
 
     # ── gRPC: PostTask ────────────────────────────────────────────────────────
 
@@ -175,6 +194,28 @@ class Dispatcher:
                 task_id=0,
                 message=error_msg,
             )
+
+        stub = self._get_nameservice_stub()
+        if stub is not None:
+            try:
+                lookup = stub.LookupWorker(
+                    taskgrid_pb2.LookupWorkerRequest(
+                        header=self._make_header("LookupWorkerRequest", request_id),
+                        type=task_type,
+                    ),
+                    timeout=5,
+                )
+                if not lookup.workers:
+                    error_msg = f"no worker registered for task type '{task_type}'"
+                    self.on_unknown_task_type(request_id, task_type)
+                    return taskgrid_pb2.PostTaskResponse(
+                        header=self._make_header("PostTaskResponse", request_id),
+                        success=False,
+                        task_id=0,
+                        message=error_msg,
+                    )
+            except grpc.RpcError as e:
+                logger.warning(request_id=request_id, event="NAMESERVICE_UNAVAILABLE_ON_POST", error=str(e.details()))
 
         task_id = self._allocate_task_id()
         self.on_task_received(request_id, task_id, task_type)
@@ -279,7 +320,8 @@ class Dispatcher:
 
     def start_dispatch_loop(self, nameservice_addr: str, task_timeout_sec: int = 60, max_retries: int = 3) -> None:
         """Start background threads for dispatch and per-task timeout checking."""
-        self._nameservice_addr = nameservice_addr
+        with self._nameservice_lock:
+            self._nameservice_addr = nameservice_addr
         self._task_timeout_ms = task_timeout_sec * 1000
         self._max_retries = max_retries
 
@@ -337,9 +379,6 @@ class Dispatcher:
                     self.on_task_failed(request_id, task.id, "task timed out after maximum retries")
 
     def _dispatch_loop(self, nameservice_addr: str) -> None:
-        nameservice_channel = grpc.insecure_channel(nameservice_addr)
-        nameservice_stub = taskgrid_pb2_grpc.NameServiceStub(nameservice_channel)
-
         while True:
             task_id = self._task_queue.dequeue()
             if task_id is None:
@@ -348,6 +387,12 @@ class Dispatcher:
 
             task = self._task_store.get(task_id)
             if task is None:
+                continue
+
+            nameservice_stub = self._get_nameservice_stub()
+            if nameservice_stub is None:
+                self._task_queue.enqueue(task_id)
+                time.sleep(1.0)
                 continue
 
             request_id = str(uuid.uuid4())
