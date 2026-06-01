@@ -8,6 +8,8 @@ COPY proto/taskgrid_pb2.py proto/taskgrid_pb2_grpc.py proto/
 COPY common/ common/
 COPY worker/ worker/
 
+RUN chmod +x /app/worker/docker-entrypoint.sh
+
 EXPOSE 50053
 
-CMD ["python", "worker/main.py"]
+ENTRYPOINT ["/app/worker/docker-entrypoint.sh"]
