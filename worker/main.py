@@ -27,6 +27,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "proto"))
 
 import taskgrid_pb2
 from worker.worker import Worker
