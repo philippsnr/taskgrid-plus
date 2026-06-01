@@ -49,18 +49,39 @@ class DispatcherServicer(taskgrid_pb2_grpc.DispatcherServiceServicer):
             1 for t in task_store.values()
             if t.status in (taskgrid_pb2.DISPATCHED, taskgrid_pb2.PROCESSING)
         )
+        total_timeouts, avg_processing_time_ms = self.dispatcher.get_stats_snapshot()
+        total_retries = sum(t.retry_count for t in task_store.values())
+
+        workers_registered = 0
+        workers_active = 0
+        supported_task_types = []
+        stub = self.dispatcher._get_nameservice_stub()
+        if stub is not None:
+            try:
+                ns_status = stub.GetNameServiceStatus(
+                    taskgrid_pb2.GetStatusRequest(
+                        header=self.dispatcher._make_header("GetStatusRequest", request.header.request_id)
+                    ),
+                    timeout=3,
+                )
+                workers_registered = ns_status.workers_registered
+                workers_active = ns_status.workers_active
+                supported_task_types = list(ns_status.supported_task_types)
+            except grpc.RpcError:
+                pass
+
         return taskgrid_pb2.GetStatusResponse(
             header=self.dispatcher._make_header("GetStatusResponse", request.header.request_id),
-            workers_registered=0,
-            workers_active=0,
-            supported_task_types=[],
+            workers_registered=workers_registered,
+            workers_active=workers_active,
+            supported_task_types=supported_task_types,
             tasks_queued=self.dispatcher._task_queue.size(),
             tasks_running=tasks_running,
             tasks_completed=sum(1 for t in task_store.values() if t.status == taskgrid_pb2.COMPLETED),
             tasks_failed=sum(1 for t in task_store.values() if t.status == taskgrid_pb2.FAILED),
-            avg_processing_time_ms=0.0,
-            total_timeouts=sum(1 for t in task_store.values() if t.status == taskgrid_pb2.TIMEOUT),
-            total_retries=sum(1 for t in task_store.values() if t.retry_count > 0),
+            avg_processing_time_ms=avg_processing_time_ms,
+            total_timeouts=total_timeouts,
+            total_retries=total_retries,
         )
 
 

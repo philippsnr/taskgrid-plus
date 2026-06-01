@@ -106,6 +106,11 @@ class Dispatcher:
         self._nameservice_channel: Optional[grpc.Channel] = None
         self._nameservice_stub: Optional[taskgrid_pb2_grpc.NameServiceStub] = None
         self._nameservice_lock = threading.Lock()
+        # monitoring counters
+        self._stats_lock = threading.Lock()
+        self._total_timeouts: int = 0
+        self._sum_processing_time_ms: float = 0.0
+        self._completed_task_count: int = 0
 
     def _allocate_task_id(self) -> int:
         with self._id_lock:
@@ -158,6 +163,18 @@ class Dispatcher:
 
     def on_result_received(self, request_id: str, task_id: int, worker_id: str, success: bool) -> None:
         logger.info(request_id=request_id, task_id=task_id, event="RESULT_RECEIVED", worker=worker_id, success=success)
+
+    # ── Stats snapshot ───────────────────────────────────────────────────────
+
+    def get_stats_snapshot(self) -> tuple[int, float]:
+        """Returns (total_timeouts, avg_processing_time_ms)."""
+        with self._stats_lock:
+            avg = (
+                self._sum_processing_time_ms / self._completed_task_count
+                if self._completed_task_count > 0
+                else 0.0
+            )
+            return self._total_timeouts, avg
 
     # ── Nameservice stub ──────────────────────────────────────────────────────
 
@@ -322,6 +339,9 @@ class Dispatcher:
                 timestamp_completed=now_ms,
             )
             duration_ms = now_ms - task.timestamp_dispatched
+            with self._stats_lock:
+                self._sum_processing_time_ms += duration_ms
+                self._completed_task_count += 1
             self.on_task_completed(request_id, task_id, duration_ms)
         else:
             self._task_store.update(
@@ -379,6 +399,8 @@ class Dispatcher:
                         continue
                     request_id = str(uuid.uuid4())
                     timed_out_worker = task.assigned_worker
+                    with self._stats_lock:
+                        self._total_timeouts += 1
                     self._task_store.update(task.id, status=taskgrid_pb2.TIMEOUT)
                     self.on_task_timeout(request_id, task.id, timed_out_worker, elapsed_ms)
                     if task.retry_count < self._max_retries:
