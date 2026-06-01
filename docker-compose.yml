@@ -1,3 +1,6 @@
+volumes:
+  dispatcher-logs:
+
 services:
   nameservice:
     build:
@@ -7,6 +10,12 @@ services:
       - NAMESERVICE_PORT=50052
     ports:
       - "50052:50052"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 50052), timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   dispatcher:
     build:
@@ -15,95 +24,111 @@ services:
     environment:
       - DISPATCHER_PORT=50051
       - NAMESERVICE_ADDR=nameservice:50052
+      - TASK_TIMEOUT_SEC=60
+      - MAX_RETRIES=3
     ports:
       - "50051:50051"
+    volumes:
+      - dispatcher-logs:/app/logs
     depends_on:
-      - nameservice
+      nameservice:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 50051), timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   worker-sum:
     build:
       context: .
       dockerfile: worker/Dockerfile
     environment:
-      - WORKER_ID=worker-sum-1
       - WORKER_TYPE=sum
-      - WORKER_ADDRESS=worker-sum
       - WORKER_PORT=50053
       - NAMESERVICE_ADDRESS=nameservice
       - NAMESERVICE_PORT=50052
       - DISPATCHER_ADDRESS=dispatcher
       - DISPATCHER_PORT=50051
+      - HEARTBEAT_INTERVAL_SEC=10
     depends_on:
-      - nameservice
-      - dispatcher
+      nameservice:
+        condition: service_healthy
+      dispatcher:
+        condition: service_healthy
 
   worker-reverse:
     build:
       context: .
       dockerfile: worker/Dockerfile
     environment:
-      - WORKER_ID=worker-reverse-1
       - WORKER_TYPE=reverse
-      - WORKER_ADDRESS=worker-reverse
       - WORKER_PORT=50053
       - NAMESERVICE_ADDRESS=nameservice
       - NAMESERVICE_PORT=50052
       - DISPATCHER_ADDRESS=dispatcher
       - DISPATCHER_PORT=50051
+      - HEARTBEAT_INTERVAL_SEC=10
     depends_on:
-      - nameservice
-      - dispatcher
+      nameservice:
+        condition: service_healthy
+      dispatcher:
+        condition: service_healthy
 
   worker-hash:
     build:
       context: .
       dockerfile: worker/Dockerfile
     environment:
-      - WORKER_ID=worker-hash-1
       - WORKER_TYPE=hash
-      - WORKER_ADDRESS=worker-hash
       - WORKER_PORT=50053
       - NAMESERVICE_ADDRESS=nameservice
       - NAMESERVICE_PORT=50052
       - DISPATCHER_ADDRESS=dispatcher
       - DISPATCHER_PORT=50051
+      - HEARTBEAT_INTERVAL_SEC=10
     depends_on:
-      - nameservice
-      - dispatcher
+      nameservice:
+        condition: service_healthy
+      dispatcher:
+        condition: service_healthy
 
   worker-upper:
     build:
       context: .
       dockerfile: worker/Dockerfile
     environment:
-      - WORKER_ID=worker-upper-1
       - WORKER_TYPE=upper
-      - WORKER_ADDRESS=worker-upper
       - WORKER_PORT=50053
       - NAMESERVICE_ADDRESS=nameservice
       - NAMESERVICE_PORT=50052
       - DISPATCHER_ADDRESS=dispatcher
       - DISPATCHER_PORT=50051
+      - HEARTBEAT_INTERVAL_SEC=10
     depends_on:
-      - nameservice
-      - dispatcher
+      nameservice:
+        condition: service_healthy
+      dispatcher:
+        condition: service_healthy
 
   worker-wait:
     build:
       context: .
       dockerfile: worker/Dockerfile
     environment:
-      - WORKER_ID=worker-wait-1
       - WORKER_TYPE=wait
-      - WORKER_ADDRESS=worker-wait
       - WORKER_PORT=50053
       - NAMESERVICE_ADDRESS=nameservice
       - NAMESERVICE_PORT=50052
       - DISPATCHER_ADDRESS=dispatcher
       - DISPATCHER_PORT=50051
+      - HEARTBEAT_INTERVAL_SEC=10
     depends_on:
-      - nameservice
-      - dispatcher
+      nameservice:
+        condition: service_healthy
+      dispatcher:
+        condition: service_healthy
 
   monitoring:
     build:
@@ -114,8 +139,10 @@ services:
       - NAMESERVICE_ADDR=nameservice:50052
       - WATCH_INTERVAL_SEC=5
     depends_on:
-      - dispatcher
-      - nameservice
+      dispatcher:
+        condition: service_healthy
+      nameservice:
+        condition: service_healthy
 
   client:
     build:
@@ -125,6 +152,7 @@ services:
       - DISPATCHER_HOST=dispatcher
       - DISPATCHER_PORT=50051
     depends_on:
-      - dispatcher
+      dispatcher:
+        condition: service_healthy
     profiles:
       - tools
