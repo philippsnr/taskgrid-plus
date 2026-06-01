@@ -281,12 +281,29 @@ class Dispatcher:
                 message=f"task {task_id} not found",
             )
 
-        if task.status == taskgrid_pb2.COMPLETED:
-            logger.warning(request_id=request_id, event="RESULT_DUPLICATE", task_id=task_id, worker=worker_id)
+        if task.status not in (taskgrid_pb2.DISPATCHED, taskgrid_pb2.PROCESSING):
+            if task.status == taskgrid_pb2.COMPLETED:
+                logger.warning(request_id=request_id, event="RESULT_DUPLICATE", task_id=task_id, worker=worker_id)
+            else:
+                logger.warning(request_id=request_id, event="RESULT_STALE_STATE", task_id=task_id, worker=worker_id, status=task.status)
             return taskgrid_pb2.ReturnResultResponse(
                 header=self._make_header("ReturnResultResponse", request_id),
                 success=False,
-                message=f"task {task_id} already completed",
+                message=f"task {task_id} is not in an active state",
+            )
+
+        if task.assigned_worker and worker_id != task.assigned_worker:
+            logger.warning(
+                request_id=request_id,
+                event="RESULT_WRONG_WORKER",
+                task_id=task_id,
+                worker=worker_id,
+                assigned=task.assigned_worker,
+            )
+            return taskgrid_pb2.ReturnResultResponse(
+                header=self._make_header("ReturnResultResponse", request_id),
+                success=False,
+                message=f"task {task_id} is assigned to a different worker",
             )
 
         now_ms = self._get_current_timestamp_ms()
@@ -343,40 +360,43 @@ class Dispatcher:
     def _timeout_loop(self) -> None:
         while True:
             time.sleep(5)
-            now_ms = self._get_current_timestamp_ms()
-            for task in self._task_store.all().values():
-                if task.status not in (taskgrid_pb2.DISPATCHED, taskgrid_pb2.PROCESSING):
-                    continue
-                if task.timestamp_dispatched == 0:
-                    continue
-                elapsed_ms = now_ms - task.timestamp_dispatched
-                if elapsed_ms <= self._task_timeout_ms:
-                    continue
-                request_id = str(uuid.uuid4())
-                timed_out_worker = task.assigned_worker
-                self._task_store.update(task.id, status=taskgrid_pb2.TIMEOUT)
-                self.on_task_timeout(request_id, task.id, timed_out_worker, elapsed_ms)
-                if task.retry_count < self._max_retries:
-                    new_count = task.retry_count + 1
-                    self._task_store.update(
-                        task.id,
-                        status=taskgrid_pb2.RETRYING,
-                        last_failed_worker=timed_out_worker,
-                        assigned_worker="",
-                        timestamp_dispatched=0,
-                        retry_count=new_count,
-                    )
-                    self.on_task_retrying(request_id, task.id, new_count)
-                    self._task_store.update(task.id, status=taskgrid_pb2.QUEUED)
-                    self._task_queue.enqueue(task.id)
-                else:
-                    self._task_store.update(
-                        task.id,
-                        status=taskgrid_pb2.FAILED,
-                        timestamp_completed=now_ms,
-                        error_message="task timed out after maximum retries",
-                    )
-                    self.on_task_failed(request_id, task.id, "task timed out after maximum retries")
+            try:
+                now_ms = self._get_current_timestamp_ms()
+                for task in self._task_store.all().values():
+                    if task.status not in (taskgrid_pb2.DISPATCHED, taskgrid_pb2.PROCESSING):
+                        continue
+                    if task.timestamp_dispatched == 0:
+                        continue
+                    elapsed_ms = now_ms - task.timestamp_dispatched
+                    if elapsed_ms <= self._task_timeout_ms:
+                        continue
+                    request_id = str(uuid.uuid4())
+                    timed_out_worker = task.assigned_worker
+                    self._task_store.update(task.id, status=taskgrid_pb2.TIMEOUT)
+                    self.on_task_timeout(request_id, task.id, timed_out_worker, elapsed_ms)
+                    if task.retry_count < self._max_retries:
+                        new_count = task.retry_count + 1
+                        self._task_store.update(
+                            task.id,
+                            status=taskgrid_pb2.RETRYING,
+                            last_failed_worker=timed_out_worker,
+                            assigned_worker="",
+                            timestamp_dispatched=0,
+                            retry_count=new_count,
+                        )
+                        self.on_task_retrying(request_id, task.id, new_count)
+                        self._task_store.update(task.id, status=taskgrid_pb2.QUEUED)
+                        self._task_queue.enqueue(task.id)
+                    else:
+                        self._task_store.update(
+                            task.id,
+                            status=taskgrid_pb2.FAILED,
+                            timestamp_completed=now_ms,
+                            error_message="task timed out after maximum retries",
+                        )
+                        self.on_task_failed(request_id, task.id, "task timed out after maximum retries")
+            except Exception as e:
+                logger.error(event="TIMEOUT_LOOP_ERROR", error=str(e))
 
     def _dispatch_loop(self, nameservice_addr: str) -> None:
         while True:
@@ -398,9 +418,20 @@ class Dispatcher:
             request_id = str(uuid.uuid4())
             worker = self._select_worker(nameservice_stub, request_id, task_id, task.type, exclude_worker=task.last_failed_worker)
             if worker is None:
-                # Re-queue and back off briefly before retrying
-                self._task_queue.enqueue(task_id)
-                time.sleep(1.0)
+                if task.retry_count > 0:
+                    # Retry after timeout: no alternative worker available → FAILED
+                    now_ms = self._get_current_timestamp_ms()
+                    self._task_store.update(
+                        task_id,
+                        status=taskgrid_pb2.FAILED,
+                        timestamp_completed=now_ms,
+                        error_message="no alternative worker available for retry",
+                    )
+                    self.on_task_failed(request_id, task_id, "no alternative worker available for retry")
+                else:
+                    # First dispatch attempt; re-queue and back off briefly before retrying
+                    self._task_queue.enqueue(task_id)
+                    time.sleep(1.0)
                 continue
 
             self._dispatch_to_worker(request_id, task, worker)
