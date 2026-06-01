@@ -1,4 +1,3 @@
-import json
 import os
 import signal
 import sys
@@ -56,11 +55,13 @@ class Worker:
         port: Optional[int] = None,
         nameservice_address: Optional[str] = None,
         nameservice_port: Optional[int] = None,
+        dispatcher_address: Optional[str] = None,
+        dispatcher_port: Optional[int] = None,
         heartbeat_interval_sec: Optional[int] = None,
         capacity: int = 10,
     ) -> None:
         """Initialize Worker with configuration from environment variables or parameters.
-        
+
         Environment variables:
         - WORKER_ID: unique identifier for this worker (required)
         - WORKER_TYPE: task type handled by this worker (required)
@@ -68,9 +69,11 @@ class Worker:
         - WORKER_PORT: port where this worker's gRPC server listens (default: 50052)
         - NAMESERVICE_ADDRESS: address of Namensdienst (default: localhost)
         - NAMESERVICE_PORT: port of Namensdienst (default: 50051)
+        - DISPATCHER_ADDRESS: address of Dispatcher for returning results (default: localhost)
+        - DISPATCHER_PORT: port of Dispatcher for returning results (default: 50051)
         - HEARTBEAT_INTERVAL_SEC: interval between heartbeats (default: 10)
         - WORKER_CAPACITY: max concurrent tasks (default: 10)
-        
+
         Args:
             worker_id: Override WORKER_ID env var
             worker_type: Override WORKER_TYPE env var
@@ -78,6 +81,8 @@ class Worker:
             port: Override WORKER_PORT env var
             nameservice_address: Override NAMESERVICE_ADDRESS env var
             nameservice_port: Override NAMESERVICE_PORT env var
+            dispatcher_address: Override DISPATCHER_ADDRESS env var
+            dispatcher_port: Override DISPATCHER_PORT env var
             heartbeat_interval_sec: Override HEARTBEAT_INTERVAL_SEC env var
             capacity: Max concurrent tasks
         """
@@ -88,6 +93,8 @@ class Worker:
         self._port = port or int(os.environ.get("WORKER_PORT", "50052"))
         self._nameservice_address = nameservice_address or os.environ.get("NAMESERVICE_ADDRESS", "localhost")
         self._nameservice_port = nameservice_port or int(os.environ.get("NAMESERVICE_PORT", "50051"))
+        self._dispatcher_address = dispatcher_address or os.environ.get("DISPATCHER_ADDRESS", "localhost")
+        self._dispatcher_port = dispatcher_port or int(os.environ.get("DISPATCHER_PORT", "50051"))
         self._heartbeat_interval_sec = heartbeat_interval_sec or int(os.environ.get("HEARTBEAT_INTERVAL_SEC", "10"))
         self._capacity = capacity
 
@@ -325,7 +332,9 @@ class Worker:
         """Send result back to Dispatcher."""
         try:
             if self._dispatcher_stub is None:
-                self._dispatcher_channel = grpc.insecure_channel("localhost:50051")
+                self._dispatcher_channel = grpc.insecure_channel(
+                    f"{self._dispatcher_address}:{self._dispatcher_port}"
+                )
                 self._dispatcher_stub = taskgrid_pb2_grpc.DispatcherServiceStub(
                     self._dispatcher_channel
                 )
@@ -354,24 +363,6 @@ class Worker:
                 event="RESULT_RETURN_ERROR",
                 error=str(e),
             )
-
-    # ── Task lifecycle (for logging) ───────────────────────────────────────────
-
-    def on_task_received(self, request_id: str, task_id: int, task_type: str) -> None:
-        """Called when a task is received from Dispatcher (hook for logging/monitoring)."""
-        pass
-
-    def on_processing_started(self, request_id: str, task_id: int) -> None:
-        """Called when task processing starts (hook for logging/monitoring)."""
-        pass
-
-    def on_result_sent(self, request_id: str, task_id: int) -> None:
-        """Called when result is sent to Dispatcher (hook for logging/monitoring)."""
-        pass
-
-    def on_error(self, request_id: str, task_id: int, error: str) -> None:
-        """Called when task processing fails (hook for logging/monitoring)."""
-        pass
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
 
@@ -488,8 +479,6 @@ class _WorkerServicer(taskgrid_pb2_grpc.WorkerServiceServicer):
                 message=f"Worker at capacity or shutting down",
             )
 
-        # Log task received
-        self._worker.on_task_received(request_id, task.id, task.type)
         self._worker._logger.info(
             request_id=request_id,
             task_id=task.id,
@@ -497,19 +486,16 @@ class _WorkerServicer(taskgrid_pb2_grpc.WorkerServiceServicer):
             type=task.type,
         )
 
-        # Update load
+        thread = threading.Thread(
+            target=self._worker._process_task_background,
+            args=(task, request_id),
+            daemon=True,
+            name=f"task-{task.id}",
+        )
         with self._worker._lock:
             self._worker._current_load += 1
-
-            # Start background processing thread
-            thread = threading.Thread(
-                target=self._worker._process_task_background,
-                args=(task, request_id),
-                daemon=True,
-                name=f"task-{task.id}",
-            )
             self._worker._task_threads[task.id] = thread
-            thread.start()
+        thread.start()
 
         return taskgrid_pb2.ProcessTaskResponse(
             header=_response_header("PROCESS_TASK_RESPONSE"),
