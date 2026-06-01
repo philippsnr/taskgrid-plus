@@ -253,11 +253,33 @@ class Worker:
                     event="HEARTBEAT_FAILED",
                     message=response.message,
                 )
+                # Nameservice doesn't recognise us (e.g., restarted and lost state) — re-register
+                self._reregister_once()
         except Exception as e:
-            self._logger.error(
+            self._logger.warning(
                 event="HEARTBEAT_ERROR",
                 error=str(e),
             )
+
+    def _reregister_once(self) -> None:
+        """Single re-registration attempt used when the nameservice has forgotten this worker."""
+        try:
+            stub = self._get_nameservice_stub()
+            request = taskgrid_pb2.RegisterWorkerRequest(
+                header=_response_header("REGISTER_WORKER"),
+                worker_id=self._worker_id,
+                type=self._worker_type,
+                address=self._address,
+                port=self._port,
+                capacity=self._capacity,
+            )
+            response = stub.RegisterWorker(request, timeout=5)
+            if response.success:
+                self._logger.info(event="RE_REGISTERED")
+            else:
+                self._logger.warning(event="RE_REGISTRATION_FAILED", message=response.message)
+        except Exception as e:
+            self._logger.warning(event="RE_REGISTRATION_ERROR", error=str(e))
 
     # ── Task Processing ──────────────────────────────────────────────────────
 

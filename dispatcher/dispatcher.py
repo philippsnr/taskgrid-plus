@@ -17,6 +17,8 @@ from common.logger import get_logger
 
 logger = get_logger("dispatcher")
 
+_NAMESERVICE_RETRY_DELAY_SEC = 5  # backoff when nameservice is temporarily unavailable
+
 
 # ── Data structures ────────────────────────────────────────────────────────
 
@@ -416,9 +418,13 @@ class Dispatcher:
                 continue
 
             request_id = str(uuid.uuid4())
-            worker = self._select_worker(nameservice_stub, request_id, task_id, task.type, exclude_worker=task.last_failed_worker)
+            worker, nameservice_failed = self._select_worker(nameservice_stub, request_id, task_id, task.type, exclude_worker=task.last_failed_worker)
             if worker is None:
-                if task.retry_count > 0:
+                if nameservice_failed:
+                    # Nameservice temporarily unavailable — keep task queued and back off
+                    self._task_queue.enqueue(task_id)
+                    time.sleep(_NAMESERVICE_RETRY_DELAY_SEC)
+                elif task.retry_count > 0:
                     # Retry after timeout: no alternative worker available → FAILED
                     now_ms = self._get_current_timestamp_ms()
                     self._task_store.update(
@@ -443,7 +449,12 @@ class Dispatcher:
         task_id: int,
         task_type: str,
         exclude_worker: str = "",
-    ) -> Optional[taskgrid_pb2.Worker]:
+    ) -> tuple[Optional[taskgrid_pb2.Worker], bool]:
+        """Returns (worker, nameservice_unavailable).
+
+        nameservice_unavailable=True means the RPC call itself failed (transient outage).
+        nameservice_unavailable=False means the call succeeded but no suitable worker exists.
+        """
         try:
             response = nameservice_stub.LookupWorker(
                 taskgrid_pb2.LookupWorkerRequest(
@@ -452,8 +463,8 @@ class Dispatcher:
                 )
             )
         except grpc.RpcError as e:
-            logger.error(request_id=request_id, task_id=task_id, event="NAMESERVICE_ERROR", error=str(e.details()))
-            return None
+            logger.warning(request_id=request_id, task_id=task_id, event="NAMESERVICE_UNAVAILABLE", error=str(e.details()))
+            return None, True
 
         # Safety filter: keep only ACTIVE workers (NameService should already filter,
         # but this guards against stale registrations slipping through).
@@ -461,7 +472,7 @@ class Dispatcher:
         if not active_workers:
             # Edge case: all known workers are UNHEALTHY or OFFLINE — do not dispatch.
             self.on_no_worker_available(request_id, task_id, task_type)
-            return None
+            return None, False
 
         # Selection strategy: Least Load
         # Among the active candidates we pick the worker reporting the lowest
@@ -475,7 +486,7 @@ class Dispatcher:
         candidates = preferred if preferred else active_workers
         selected = min(candidates, key=lambda w: w.current_load)
         self.on_worker_selected(request_id, task_id, selected.worker_id, "least_loaded")
-        return selected
+        return selected, False
 
     def _get_or_create_worker_channel(self, worker: taskgrid_pb2.Worker) -> grpc.Channel:
         addr = f"{worker.address}:{worker.port}"
