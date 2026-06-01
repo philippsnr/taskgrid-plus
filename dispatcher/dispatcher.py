@@ -31,6 +31,7 @@ class TaskRecord:
     timestamp_dispatched: int = 0
     timestamp_completed: int = 0
     result: str = ""
+    error_message: str = ""
     retry_count: int = 0
     assigned_worker: str = ""
 
@@ -212,13 +213,14 @@ class Dispatcher:
                 message=f"task {task_id} not found",
             )
 
+        terminal_error = task.status in (taskgrid_pb2.FAILED, taskgrid_pb2.TIMEOUT)
         return taskgrid_pb2.GetResultResponse(
             header=self._make_header("GetResultResponse", request_id),
             success=True,
             task_id=task_id,
             result=task.result,
             status=task.status,
-            message="",
+            message=task.error_message if terminal_error else "",
         )
 
     # ── gRPC: ReturnResult (Worker → Dispatcher) ──────────────────────────────
@@ -237,6 +239,14 @@ class Dispatcher:
                 message=f"task {task_id} not found",
             )
 
+        if task.status == taskgrid_pb2.COMPLETED:
+            logger.warning(request_id=request_id, event="RESULT_DUPLICATE", task_id=task_id, worker=worker_id)
+            return taskgrid_pb2.ReturnResultResponse(
+                header=self._make_header("ReturnResultResponse", request_id),
+                success=False,
+                message=f"task {task_id} already completed",
+            )
+
         now_ms = self._get_current_timestamp_ms()
         if request.success:
             self._task_store.update(
@@ -248,7 +258,12 @@ class Dispatcher:
             duration_ms = now_ms - task.timestamp_dispatched
             self.on_task_completed(request_id, task_id, duration_ms)
         else:
-            self._task_store.update(task_id, status=taskgrid_pb2.FAILED, timestamp_completed=now_ms)
+            self._task_store.update(
+                task_id,
+                status=taskgrid_pb2.FAILED,
+                timestamp_completed=now_ms,
+                error_message=request.error_message,
+            )
             self.on_task_failed(request_id, task_id, request.error_message)
 
         self.on_result_received(request_id, task_id, worker_id, request.success)
@@ -311,6 +326,7 @@ class Dispatcher:
                         task.id,
                         status=taskgrid_pb2.TIMEOUT,
                         timestamp_completed=now_ms,
+                        error_message="task timed out",
                     )
 
     def _dispatch_loop(self, nameservice_addr: str) -> None:
