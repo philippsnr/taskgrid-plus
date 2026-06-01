@@ -1,0 +1,130 @@
+services:
+  nameservice:
+    build:
+      context: .
+      dockerfile: nameservice/Dockerfile
+    environment:
+      - NAMESERVICE_PORT=50052
+    ports:
+      - "50052:50052"
+
+  dispatcher:
+    build:
+      context: .
+      dockerfile: dispatcher/Dockerfile
+    environment:
+      - DISPATCHER_PORT=50051
+      - NAMESERVICE_ADDR=nameservice:50052
+    ports:
+      - "50051:50051"
+    depends_on:
+      - nameservice
+
+  worker-sum:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      - WORKER_ID=worker-sum-1
+      - WORKER_TYPE=sum
+      - WORKER_ADDRESS=worker-sum
+      - WORKER_PORT=50053
+      - NAMESERVICE_ADDRESS=nameservice
+      - NAMESERVICE_PORT=50052
+      - DISPATCHER_ADDRESS=dispatcher
+      - DISPATCHER_PORT=50051
+    depends_on:
+      - nameservice
+      - dispatcher
+
+  worker-reverse:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      - WORKER_ID=worker-reverse-1
+      - WORKER_TYPE=reverse
+      - WORKER_ADDRESS=worker-reverse
+      - WORKER_PORT=50053
+      - NAMESERVICE_ADDRESS=nameservice
+      - NAMESERVICE_PORT=50052
+      - DISPATCHER_ADDRESS=dispatcher
+      - DISPATCHER_PORT=50051
+    depends_on:
+      - nameservice
+      - dispatcher
+
+  worker-hash:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      - WORKER_ID=worker-hash-1
+      - WORKER_TYPE=hash
+      - WORKER_ADDRESS=worker-hash
+      - WORKER_PORT=50053
+      - NAMESERVICE_ADDRESS=nameservice
+      - NAMESERVICE_PORT=50052
+      - DISPATCHER_ADDRESS=dispatcher
+      - DISPATCHER_PORT=50051
+    depends_on:
+      - nameservice
+      - dispatcher
+
+  worker-upper:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      - WORKER_ID=worker-upper-1
+      - WORKER_TYPE=upper
+      - WORKER_ADDRESS=worker-upper
+      - WORKER_PORT=50053
+      - NAMESERVICE_ADDRESS=nameservice
+      - NAMESERVICE_PORT=50052
+      - DISPATCHER_ADDRESS=dispatcher
+      - DISPATCHER_PORT=50051
+    depends_on:
+      - nameservice
+      - dispatcher
+
+  worker-wait:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      - WORKER_ID=worker-wait-1
+      - WORKER_TYPE=wait
+      - WORKER_ADDRESS=worker-wait
+      - WORKER_PORT=50053
+      - NAMESERVICE_ADDRESS=nameservice
+      - NAMESERVICE_PORT=50052
+      - DISPATCHER_ADDRESS=dispatcher
+      - DISPATCHER_PORT=50051
+    depends_on:
+      - nameservice
+      - dispatcher
+
+  monitoring:
+    build:
+      context: .
+      dockerfile: monitoring/Dockerfile
+    environment:
+      - DISPATCHER_ADDR=dispatcher:50051
+      - NAMESERVICE_ADDR=nameservice:50052
+      - WATCH_INTERVAL_SEC=5
+    depends_on:
+      - dispatcher
+      - nameservice
+
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+    environment:
+      - DISPATCHER_HOST=dispatcher
+      - DISPATCHER_PORT=50051
+    depends_on:
+      - dispatcher
+    profiles:
+      - tools
