@@ -10,6 +10,8 @@ Environment variables:
 - WORKER_PORT: listen port (default: 50052)
 - NAMESERVICE_ADDRESS: Namensdienst address (default: localhost)
 - NAMESERVICE_PORT: Namensdienst port (default: 50051)
+- DISPATCHER_ADDRESS: Dispatcher address for returning results (default: localhost)
+- DISPATCHER_PORT: Dispatcher port for returning results (default: 50051)
 - HEARTBEAT_INTERVAL_SEC: heartbeat interval in seconds (default: 10)
 - WORKER_CAPACITY: max concurrent tasks (default: 10)
 
