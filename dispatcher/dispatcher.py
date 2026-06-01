@@ -261,17 +261,57 @@ class Dispatcher:
 
     # ── Background dispatch loop ──────────────────────────────────────────────
 
-    def start_dispatch_loop(self, nameservice_addr: str) -> None:
-        """Start background thread that dequeues tasks and forwards them to workers."""
+    def start_dispatch_loop(self, nameservice_addr: str, task_timeout_sec: int = 60, max_retries: int = 3) -> None:
+        """Start background threads for dispatch and per-task timeout checking."""
         self._nameservice_addr = nameservice_addr
-        thread = threading.Thread(
+        self._task_timeout_ms = task_timeout_sec * 1000
+        self._max_retries = max_retries
+
+        threading.Thread(
             target=self._dispatch_loop,
             args=(nameservice_addr,),
             daemon=True,
             name="dispatch-loop",
-        )
-        thread.start()
-        logger.info(event="DISPATCH_LOOP_STARTED", nameservice_addr=nameservice_addr)
+        ).start()
+
+        threading.Thread(
+            target=self._timeout_loop,
+            daemon=True,
+            name="timeout-checker",
+        ).start()
+
+        logger.info(event="DISPATCH_LOOP_STARTED", nameservice_addr=nameservice_addr, task_timeout_sec=task_timeout_sec)
+
+    def _timeout_loop(self) -> None:
+        while True:
+            time.sleep(5)
+            now_ms = self._get_current_timestamp_ms()
+            for task in self._task_store.all().values():
+                if task.status not in (taskgrid_pb2.DISPATCHED, taskgrid_pb2.PROCESSING):
+                    continue
+                if task.timestamp_dispatched == 0:
+                    continue
+                if now_ms - task.timestamp_dispatched <= self._task_timeout_ms:
+                    continue
+                request_id = str(uuid.uuid4())
+                self.on_task_timeout(request_id, task.id)
+                if task.retry_count < self._max_retries:
+                    new_count = task.retry_count + 1
+                    self._task_store.update(
+                        task.id,
+                        status=taskgrid_pb2.QUEUED,
+                        assigned_worker="",
+                        timestamp_dispatched=0,
+                        retry_count=new_count,
+                    )
+                    self.on_task_retrying(request_id, task.id, new_count)
+                    self._task_queue.enqueue(task.id)
+                else:
+                    self._task_store.update(
+                        task.id,
+                        status=taskgrid_pb2.TIMEOUT,
+                        timestamp_completed=now_ms,
+                    )
 
     def _dispatch_loop(self, nameservice_addr: str) -> None:
         nameservice_channel = grpc.insecure_channel(nameservice_addr)
@@ -367,7 +407,10 @@ class Dispatcher:
                     task=proto_task,
                 )
             )
-            if not response.accepted:
+            if response.accepted:
+                self._task_store.update(task.id, status=taskgrid_pb2.PROCESSING)
+                logger.info(request_id=request_id, task_id=task.id, status="PROCESSING", worker=worker.worker_id)
+            else:
                 logger.warning(
                     request_id=request_id,
                     task_id=task.id,
