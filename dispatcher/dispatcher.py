@@ -286,13 +286,18 @@ class Dispatcher:
         if task.status not in (taskgrid_pb2.DISPATCHED, taskgrid_pb2.PROCESSING):
             if task.status == taskgrid_pb2.COMPLETED:
                 logger.warning(request_id=request_id, event="RESULT_DUPLICATE", task_id=task_id, worker=worker_id)
+                return taskgrid_pb2.ReturnResultResponse(
+                    header=self._make_header("ReturnResultResponse", request_id),
+                    success=False,
+                    message=f"task {task_id} is already completed",
+                )
             else:
                 logger.warning(request_id=request_id, event="RESULT_STALE_STATE", task_id=task_id, worker=worker_id, status=task.status)
-            return taskgrid_pb2.ReturnResultResponse(
-                header=self._make_header("ReturnResultResponse", request_id),
-                success=False,
-                message=f"task {task_id} is not in an active state",
-            )
+                return taskgrid_pb2.ReturnResultResponse(
+                    header=self._make_header("ReturnResultResponse", request_id),
+                    success=False,
+                    message=f"task {task_id} is not in an active state",
+                )
 
         if task.assigned_worker and worker_id != task.assigned_worker:
             logger.warning(
