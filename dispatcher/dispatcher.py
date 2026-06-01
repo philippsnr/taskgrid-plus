@@ -34,6 +34,7 @@ class TaskRecord:
     error_message: str = ""
     retry_count: int = 0
     assigned_worker: str = ""
+    last_failed_worker: str = ""
 
 
 class TaskQueue:
@@ -133,8 +134,8 @@ class Dispatcher:
     def on_task_failed(self, request_id: str, task_id: int, error: str) -> None:
         logger.error(request_id=request_id, task_id=task_id, status="FAILED", error=error)
 
-    def on_task_timeout(self, request_id: str, task_id: int) -> None:
-        logger.warning(request_id=request_id, task_id=task_id, status="TIMEOUT")
+    def on_task_timeout(self, request_id: str, task_id: int, worker: str, elapsed_ms: int) -> None:
+        logger.warning(request_id=request_id, task_id=task_id, status="TIMEOUT", worker=worker, elapsed_ms=elapsed_ms)
 
     def on_task_retrying(self, request_id: str, task_id: int, retry_count: int) -> None:
         logger.warning(request_id=request_id, task_id=task_id, status="RETRYING", retry_count=retry_count)
@@ -306,28 +307,34 @@ class Dispatcher:
                     continue
                 if task.timestamp_dispatched == 0:
                     continue
-                if now_ms - task.timestamp_dispatched <= self._task_timeout_ms:
+                elapsed_ms = now_ms - task.timestamp_dispatched
+                if elapsed_ms <= self._task_timeout_ms:
                     continue
                 request_id = str(uuid.uuid4())
-                self.on_task_timeout(request_id, task.id)
+                timed_out_worker = task.assigned_worker
+                self._task_store.update(task.id, status=taskgrid_pb2.TIMEOUT)
+                self.on_task_timeout(request_id, task.id, timed_out_worker, elapsed_ms)
                 if task.retry_count < self._max_retries:
                     new_count = task.retry_count + 1
                     self._task_store.update(
                         task.id,
-                        status=taskgrid_pb2.QUEUED,
+                        status=taskgrid_pb2.RETRYING,
+                        last_failed_worker=timed_out_worker,
                         assigned_worker="",
                         timestamp_dispatched=0,
                         retry_count=new_count,
                     )
                     self.on_task_retrying(request_id, task.id, new_count)
+                    self._task_store.update(task.id, status=taskgrid_pb2.QUEUED)
                     self._task_queue.enqueue(task.id)
                 else:
                     self._task_store.update(
                         task.id,
-                        status=taskgrid_pb2.TIMEOUT,
+                        status=taskgrid_pb2.FAILED,
                         timestamp_completed=now_ms,
-                        error_message="task timed out",
+                        error_message="task timed out after maximum retries",
                     )
+                    self.on_task_failed(request_id, task.id, "task timed out after maximum retries")
 
     def _dispatch_loop(self, nameservice_addr: str) -> None:
         nameservice_channel = grpc.insecure_channel(nameservice_addr)
@@ -344,7 +351,7 @@ class Dispatcher:
                 continue
 
             request_id = str(uuid.uuid4())
-            worker = self._select_worker(nameservice_stub, request_id, task_id, task.type)
+            worker = self._select_worker(nameservice_stub, request_id, task_id, task.type, exclude_worker=task.last_failed_worker)
             if worker is None:
                 # Re-queue and back off briefly before retrying
                 self._task_queue.enqueue(task_id)
@@ -359,6 +366,7 @@ class Dispatcher:
         request_id: str,
         task_id: int,
         task_type: str,
+        exclude_worker: str = "",
     ) -> Optional[taskgrid_pb2.Worker]:
         try:
             response = nameservice_stub.LookupWorker(
@@ -376,8 +384,10 @@ class Dispatcher:
             self.on_no_worker_available(request_id, task_id, task_type)
             return None
 
-        # Least-loaded worker selection
-        selected = min(active_workers, key=lambda w: w.current_load)
+        # On retry: prefer a different worker than the one that timed out
+        preferred = [w for w in active_workers if w.worker_id != exclude_worker]
+        candidates = preferred if preferred else active_workers
+        selected = min(candidates, key=lambda w: w.current_load)
         self.on_worker_selected(request_id, task_id, selected.worker_id, "least_loaded")
         return selected
 

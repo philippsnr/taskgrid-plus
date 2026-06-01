@@ -61,6 +61,39 @@ docker compose up --scale worker-sum=3
 docker compose down
 ```
 
+## Startanleitung
+
+### Konfiguration
+
+Alle Komponenten werden über Umgebungsvariablen konfiguriert. Die Standardwerte sind für eine lokale Docker-Compose-Umgebung vorbelegt.
+
+#### Dispatcher
+
+| Variable | Standardwert | Beschreibung |
+|----------|-------------|-------------|
+| `DISPATCHER_PORT` | `50051` | gRPC-Port des Dispatchers |
+| `NAMESERVICE_ADDR` | `nameservice:50052` | Adresse des Namensdienstes |
+| `TASK_TIMEOUT_SEC` | `60` | Timeout in Sekunden, nach dem ein nicht beantworteter Task erneut eingeplant wird |
+| `MAX_RETRIES` | `3` | Maximale Anzahl an Wiederholungsversuchen pro Task; bei Überschreitung wird der Task auf `FAILED` gesetzt |
+| `LOG_LEVEL` | `INFO` | Log-Level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `LOG_DIR` | *(leer)* | Optionales Verzeichnis für Log-Dateien |
+
+#### Namensdienst
+
+| Variable | Standardwert | Beschreibung |
+|----------|-------------|-------------|
+| `NAMESERVICE_PORT` | `50052` | gRPC-Port des Namensdienstes |
+| `HEARTBEAT_TIMEOUT_SEC` | `30` | Zeit in Sekunden, nach der ein Worker ohne Heartbeat als inaktiv gilt |
+
+#### Worker
+
+| Variable | Standardwert | Beschreibung |
+|----------|-------------|-------------|
+| `WORKER_PORT` | `50053` | gRPC-Port des Workers |
+| `NAMESERVICE_ADDR` | `nameservice:50052` | Adresse des Namensdienstes |
+| `DISPATCHER_ADDR` | `dispatcher:50051` | Adresse des Dispatchers |
+| `TASK_TYPE` | *(erforderlich)* | Tasktyp, den dieser Worker verarbeitet (z. B. `sum`, `reverse`) |
+
 ## Projektstruktur
 
 ```
