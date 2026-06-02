@@ -13,6 +13,7 @@ To add a new task type:
 5. Dispatcher discovers workers for that type via LookupWorker
 """
 
+import base64
 import hashlib
 import time
 
@@ -107,6 +108,74 @@ def handle_wait(payload: str) -> tuple[bool, str]:
         return False, f"Wait failed: {str(e)}"
 
 
+def handle_wordcount(payload: str) -> tuple[bool, str]:
+    """Count the number of words in the payload.
+
+    Example: "hello world foo" → "3"
+    """
+    if not payload.strip():
+        return True, "0"
+    word_count = len(payload.split())
+    return True, str(word_count)
+
+
+def handle_lower(payload: str) -> tuple[bool, str]:
+    """Convert string to lowercase.
+
+    Example: "HELLO WORLD" → "hello world"
+    """
+    return True, payload.lower()
+
+
+def handle_base64(payload: str) -> tuple[bool, str]:
+    """Base64-encode the payload.
+
+    Example: "hello" → "aGVsbG8="
+    """
+    try:
+        encoded = base64.b64encode(payload.encode('utf-8')).decode('ascii')
+        return True, encoded
+    except Exception as e:
+        return False, f"Base64 encoding failed: {str(e)}"
+
+
+def handle_prime(payload: str) -> tuple[bool, str]:
+    """Check whether the input number is prime.
+
+    Returns "true" if prime, "false" otherwise.
+    Example: "7" → "true", "6" → "false"
+    """
+    try:
+        payload_stripped = payload.strip()
+        if not payload_stripped:
+            return False, "Payload cannot be empty"
+        
+        try:
+            n = int(payload_stripped)
+        except ValueError:
+            return False, f"Invalid integer: '{payload_stripped}'"
+        
+        if n < 2:
+            return True, "false"
+        
+        if n == 2:
+            return True, "true"
+        
+        if n % 2 == 0:
+            return True, "false"
+        
+        # Check odd divisors up to sqrt(n)
+        i = 3
+        while i * i <= n:
+            if n % i == 0:
+                return True, "false"
+            i += 2
+        
+        return True, "true"
+    except Exception as e:
+        return False, f"Prime check failed: {str(e)}"
+
+
 # ─── Handler Registry ─────────────────────────────────────────────────────────
 
 HANDLERS = {
@@ -115,6 +184,10 @@ HANDLERS = {
     "hash": handle_hash,
     "upper": handle_upper,
     "wait": handle_wait,
+    "wordcount": handle_wordcount,
+    "lower": handle_lower,
+    "base64": handle_base64,
+    "prime": handle_prime,
 }
 
 SUPPORTED_TYPES = list(HANDLERS.keys())
