@@ -34,6 +34,8 @@ Kein Eintrag im internen Task-Store, kein Status-Übergang. Das System läuft oh
 [dispatcher] request_id=robustness-1780568289769 event=UNKNOWN_TASK_TYPE type=unknowntype
 ```
 
+![Fall A — Testablauf im Terminal](img/screenshot-robustness-case-a.png)
+
 ### Bewertung
 **Korrekt.** Der Dispatcher erkennt sofort, dass kein Worker für den Typ existiert, und gibt einen klaren Fehler zurück. Dem Client wird eine verständliche Fehlermeldung geliefert. Keine `task_id` wurde vergeben, es findet kein Status-Übergang statt.
 
@@ -87,6 +89,8 @@ Der Dispatcher nimmt den Task in die Warteschlange auf (weil er zum Zeitpunkt de
 ... (weitere Versuche) ...
 [dispatcher] request_id=fd84f32b-...  task_id=7  status=COMPLETED  duration_ms=2
 ```
+
+![Fall C — Testablauf im Terminal](img/screenshot-robustness-case-c.png)
 
 ### Bewertung
 **Weitgehend korrekt.** Der Dispatcher hält den Task in der Warteschlange und wiederholt den Dispatch-Versuch, statt sofort zu scheitern. Nach dem Neustart des Workers wird der Task automatisch zugestellt und erfolgreich abgeschlossen (`result='6'` = 1+2+3). Das System zeigt damit Selbstheilungsfähigkeit. Verbesserungspotenzial: Der Dispatcher sollte den Nameservice öfter befragen, um offline gegangene Worker früher aus dem Dispatch-Pool zu entfernen.
@@ -142,6 +146,8 @@ Da der Worker abstürzt, ohne ein Ergebnis zurückzugeben, wartet der Dispatcher
 ```
 CREATED → QUEUED → DISPATCHED → PROCESSING → TIMEOUT → RETRYING → FAILED
 ```
+
+![Fall B — Testablauf im Terminal](img/screenshot-robustness-case-b.png)
 
 ### Bewertung
 **Korrekt.** Der Dispatcher erkennt nach 64 s (≈ `TASK_TIMEOUT_SEC=60` + Puffer), dass der Worker nicht antwortet, und setzt den Status auf `TIMEOUT`. Es wird ein Retry versucht, der wegen fehlender alternativer Worker direkt zu `FAILED` führt. Die Fehlermeldung ist eindeutig. Alle anderen Worker und der Dispatcher bleiben betriebsbereit. Das Verhalten entspricht der spezifizierten Fehlerbehandlung.
