@@ -116,17 +116,21 @@ docker compose logs -f monitoring
 Beispielausgabe:
 ```
 +------------------------------------------+
+
 |  TaskGrid+ Status  2026-06-02 12:00:00   |
 +------------------------------------------+
+
 |  Workers registered                     5|
 |  Workers active                         5|
 |  Supported task types  hash, reverse, ...|
 +------------------------------------------+
+
 |  Tasks queued                           0|
 |  Tasks running                          2|
 |  Tasks completed                       42|
 |  Tasks failed                           1|
 +------------------------------------------+
+
 |  Avg processing time (ms)           123.4|
 |  Total timeouts                         0|
 |  Total retries                          1|

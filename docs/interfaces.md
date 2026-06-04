@@ -114,6 +114,7 @@ message Worker {
 Stellt einen neuen Task in die Queue.
 
 **Request:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `header` | MessageHeader | Korrelations-ID, Absender |
@@ -121,6 +122,7 @@ Stellt einen neuen Task in die Queue.
 | `payload` | string | Eingabedaten — darf nicht leer sein |
 
 **Response:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `header` | MessageHeader | |
@@ -139,12 +141,14 @@ Stellt einen neuen Task in die Queue.
 Fragt Status und Ergebnis eines Tasks ab.
 
 **Request:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `header` | MessageHeader | |
 | `task_id` | int32 | ID des abzufragenden Tasks |
 
 **Response:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `header` | MessageHeader | |
@@ -164,6 +168,7 @@ Fragt Status und Ergebnis eines Tasks ab.
 Worker liefert das Verarbeitungsergebnis zurück.
 
 **Request:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `header` | MessageHeader | |
@@ -174,6 +179,7 @@ Worker liefert das Verarbeitungsergebnis zurück.
 | `error_message` | string | Fehlerbeschreibung (nur wenn `success=false`) |
 
 **Response:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `header` | MessageHeader | |
@@ -194,6 +200,7 @@ Liefert aktuelle Systemmetriken des Dispatchers.
 **Request:** nur `header`
 
 **Response:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `workers_registered` | int32 | Bekannte Worker-Adressen im Channel-Cache |
@@ -216,6 +223,7 @@ Liefert aktuelle Systemmetriken des Dispatchers.
 Worker meldet sich beim Start an.
 
 **Request:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `header` | MessageHeader | |
@@ -236,6 +244,7 @@ Worker meldet sich beim Start an.
 Worker signalisiert Verfügbarkeit periodisch (Standard: alle 10 s).
 
 **Request:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `header` | MessageHeader | |
@@ -255,12 +264,14 @@ Worker signalisiert Verfügbarkeit periodisch (Standard: alle 10 s).
 Dispatcher fragt aktive Worker für einen bestimmten Typ ab.
 
 **Request:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `header` | MessageHeader | |
 | `type` | string | Gesuchter Aufgabentyp |
 
 **Response:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `success` | bool | |
@@ -294,12 +305,14 @@ Worker meldet sich beim Shutdown explizit ab.
 Dispatcher übergibt einen Task zur Verarbeitung.
 
 **Request:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `header` | MessageHeader | |
 | `task` | Task | Vollständiges Task-Objekt inkl. Payload |
 
 **Response:**
+
 | Feld | Typ | Beschreibung |
 |------|-----|-------------|
 | `header` | MessageHeader | |
