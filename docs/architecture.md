@@ -5,47 +5,31 @@
 Das folgende Diagramm zeigt alle fünf Komponenten des Systems und ihre Kommunikationsbeziehungen. Alle Verbindungen verwenden gRPC über Protocol Buffers.
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                            Docker-Netzwerk                               │
-│                                                                          │
-│   ┌──────────┐   PostTask (gRPC)    ┌──────────────┐                     │
-│   │          │ ──────────────────► │              │                      │
-│   │  Client  │                      │  Dispatcher  │                     │
-│   │          │ ◄────────────────── │              │                      │
-│   └──────────┘   GetResult (gRPC)   └──────┬───┬──┘                      │
-│                                             │   ▲                        │
-│                                LookupWorker │   │ ReturnResult (gRPC)    │
-│                                      (gRPC) │   │                        │
-│                                             ▼   │                        │
-│                                      ┌──────────────┐                    │
-│                                      │              │                    │
-│                                      │  Namensdienst│◄──────────────┐    │
-│                                      │              │               │    │
-│                                      └──────────────┘               │    │
-│                                             ▲                        │   │
-│                          Register/Heartbeat │                        │   │
-│                          Deregister (gRPC)  │                        │   │
-│                                             │                        │   │
-│   ┌──────────────────────────────────────────────────────────────┐   │   │
-│   │  Worker-Pool (skalierbar, ein Container pro Aufgabentyp)     │   │   │
-│   │                                                              │   │   │
-│   │  ┌────────────┐  ┌────────────┐  ┌────────────┐             │   │    │
-│   │  │ Worker     │  │ Worker     │  │ Worker     │  ...        │   │    │
-│   │  │ (reverse)  │  │ (sum)      │  │ (hash)     │             │   │    │
-│   │  └────────────┘  └────────────┘  └────────────┘             │   │    │
-│   │       ▲  │             ▲  │            ▲  │                  │   │   │
-│   └────────┼──┼─────────────┼──┼────────────┼──┼──────────────────┘   │  │
-│            │  │             │  │            │  │                        ││
-│   ProcessTask │         ProcessTask │    ProcessTask │                  ││
-│    (Dispatcher→Worker) │  (Dispatcher→Worker)  │                       │ │
-│            │  └─────────────┘  └────────────┘  └──────────────────────┘  │
-│            └──── ReturnResult ────────────────────────────────────────── │
-│                                                                          │
-│   ┌──────────────┐  GetDispatcherStatus / GetNameServiceStatus (gRPC)    │
-│   │  Monitoring  │ ─────────────────────────────────────────────────►    │
-│   │              │ ◄───── Status-Response ─────────────────────────────  │
-│   └──────────────┘                                                       │
-└──────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                              Docker-Netzwerk                               │
+│                                                                            │
+│                PostTask / GetResult            LookupWorker                │
+│   ┌──────────┐                ┌─────────────┐             ┌─────────────┐  │
+│   │  Client  │◄──────────────►│ Dispatcher  │────────────►│Namensdienst │  │
+│   └──────────┘                └─────────────┘             └─────────────┘  │
+│                                      │  ProcessTask / Register / ▲         │
+│                                      │  ReturnResult  Heartbeat  │         │
+│                                      │                           │         │
+│                                      ▼                           │         │
+│   ┌────────────────────────────────────────────────────────────────────┐   │
+│   │  Worker-Pool (skalierbar, ein Container pro Aufgabentyp)           │   │
+│   │   ┌────────────┐    ┌────────────┐    ┌────────────┐               │   │
+│   │   │  reverse   │    │    sum     │    │    hash    │   ...         │   │
+│   │   └────────────┘    └────────────┘    └────────────┘               │   │
+│   └────────────────────────────────────────────────────────────────────┘   │
+│                                                                            │
+│                                                                            │
+│                    GetDispatcherStatus / GetNameServiceStatus              │
+│   ┌────────────┐                                                           │
+│   │ Monitoring │ ──────────────────────────────────────────────────────►   │
+│   └────────────┘                                                           │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Vereinfachte Übersicht der Kommunikationsflüsse
@@ -55,13 +39,13 @@ Client ──PostTask──► Dispatcher ──LookupWorker──► Namensdien
                          │                              ▲
                          │ ProcessTask                  │ Register / Heartbeat
                          ▼                              │
-                       Worker ────────────────────────►─┘
-                                                        │
+                       Worker ──────────────────────────┘
+                         │
                          │ ReturnResult
                          ▼
                      Dispatcher ──GetResult──► Client
 
-Monitoring ──GetDispatcherStatus──► Dispatcher
+Monitoring ──GetDispatcherStatus───► Dispatcher
 Monitoring ──GetNameServiceStatus──► Namensdienst
 ```
 
@@ -219,31 +203,31 @@ Reine Beobachtungskomponente. Fragt regelmäßig den Dispatcher und den Namensdi
 ### 4.1 Happy Path: Erfolgreiche Aufgabenverarbeitung
 
 ```
-Client          Dispatcher        Namensdienst        Worker
-  │                 │                  │                 │
-  │  PostTask       │                  │                 │
-  │ ──────────────► │                  │                 │
-  │                 │  LookupWorker    │                 │
-  │                 │ ───────────────► │                 │
-  │                 │  [Worker-Liste]  │                 │
-  │                 │ ◄─────────────── │                 │
-  │                 │                  │                 │
-  │                 │  ProcessTask     │                 │
-  │                 │ ────────────────────────────────► │
-  │                 │  accepted=true   │                 │
-  │                 │ ◄──────────────────────────────── │
-  │  task_id=42     │                  │   [verarbeitet] │
-  │ ◄────────────── │                  │                 │
-  │                 │                  │  ReturnResult   │
-  │                 │ ◄─────────────────────────────────│
-  │                 │  [task_id=42,    │                 │
-  │                 │   success=true,  │                 │
-  │                 │   result="..."]  │                 │
-  │                 │                  │                 │
-  │  GetResult      │                  │                 │
-  │ ──────────────► │                  │                 │
-  │  status=COMPLETED, result="..."    │                 │
-  │ ◄────────────── │                  │                 │
+ Client          Dispatcher        Namensdienst          Worker
+    │                 │                  │                  │
+    │  PostTask       │                  │                  │
+    │ ──────────────► │                  │                  │
+    │                 │  LookupWorker    │                  │
+    │                 │ ───────────────► │                  │
+    │                 │  [Worker-Liste]  │                  │
+    │                 │ ◄─────────────── │                  │
+    │                 │                  │                  │
+    │                 │  ProcessTask     │                  │
+    │                 │ ──────────────────────────────────► │
+    │                 │  accepted=true   │                  │
+    │                 │ ◄────────────────────────────────── │
+    │  task_id=42     │                  │  [verarbeitet]   │
+    │ ◄────────────── │                  │                  │
+    │                 │  ReturnResult    │                  │
+    │                 │ ◄────────────────────────────────── │
+    │                 │  [task_id=42,    │                  │
+    │                 │   success=true,  │                  │
+    │                 │   result=...]    │                  │
+    │                 │                  │                  │
+    │  GetResult      │                  │                  │
+    │ ──────────────► │                  │                  │
+    │  status=COMPLETED, result=...      │                  │
+    │ ◄────────────── │                  │                  │
 ```
 
 **Zustandsübergänge (Task):**
@@ -256,39 +240,34 @@ Client          Dispatcher        Namensdienst        Worker
 #### Szenario A: Worker-Absturz / Timeout
 
 ```
-Client          Dispatcher        Namensdienst        Worker (abgestürzt)
-  │                 │                  │                 │
-  │  PostTask       │                  │                 │
-  │ ──────────────► │                  │                 │
-  │                 │  LookupWorker    │                 │
-  │                 │ ───────────────► │                 │
-  │                 │ ◄─────────────── │                 │
-  │                 │  ProcessTask     │                 │
-  │                 │ ────────────────────────────────►  │
-  │                 │  accepted=true   │                 │
-  │                 │ ◄────────────────────────────────  │
-  │  task_id=42     │                  │                 │
-  │ ◄────────────── │                  │   [ABSTURZ]     │
-  │                 │                  │                 ✗
-  │                 │     [Timeout-Checker alle 5s]      │
-  │                 │     Task 42: DISPATCHED seit > 60s │
-  │                 │     → Status: TIMEOUT              │
-  │                 │     retry_count=0 < MAX_RETRIES=3  │
-  │                 │     → Status: RETRYING → QUEUED    │
-  │                 │                  │                 │
-  │                 │  LookupWorker    │                 │
-  │                 │ ───────────────► │                 │
-  │                 │  [anderer Worker]│                 │
-  │                 │ ◄─────────────── │                 │
-  │                 │                  │  ┌──────────────┐
-  │                 │  ProcessTask     │  │ Worker (neu) │
-  │                 │ ────────────────────────────────►  │
-  │                 │  ReturnResult    │                 │
-  │                 │ ◄────────────────────────────────  │
-  │  GetResult      │                  │                 │
-  │ ──────────────► │                  │                 │
-  │  status=COMPLETED, result="..."    │                 │
-  │ ◄────────────── │                  │                 │
+ Client          Dispatcher        Namensdienst       Worker (tot)
+    │                 │                  │                  │
+    │  PostTask       │                  │                  │
+    │ ──────────────► │                  │                  │
+    │                 │  LookupWorker    │                  │
+    │                 │ ───────────────► │                  │
+    │                 │ ◄─────────────── │                  │
+    │                 │  ProcessTask     │                  │
+    │                 │ ──────────────────────────────────► │
+    │                 │  accepted=true   │                  │
+    │                 │ ◄────────────────────────────────── │
+    │  task_id=42     │                  │                  │
+    │ ◄────────────── │                  │                  │
+    │                 │                  │      [ABSTURZ]   ✗
+    │                 │  [Timeout-Checker, alle 5s]         │
+    │                 │  Task 42: > TASK_TIMEOUT_SEC        │
+    │                 │  → TIMEOUT → RETRYING → QUEUED      │
+    │                 │                  │                  │
+    │                 │  LookupWorker    │                  │
+    │                 │ ───────────────► │                  │
+    │                 │  [anderer Worker]│                  │
+    │                 │ ◄─────────────── │                  │
+    │                 │  ProcessTask     │                  │
+    │                 │ ──────────────────────────────────► │
+    │                 │  ReturnResult    │                  │
+    │                 │ ◄────────────────────────────────── │
+    │  status=COMPLETED                  │                  │
+    │ ◄────────────── │                  │                  │
 ```
 
 **Zustandsübergänge:**
@@ -302,20 +281,20 @@ Bei Erschöpfung aller Retries:
 #### Szenario B: Worker lehnt Aufgabe ab (Kapazität voll)
 
 ```
-Client          Dispatcher        Namensdienst      Worker (voll)
-  │                 │                  │                 │
-  │  PostTask       │                  │                 │
-  │ ──────────────► │                  │                 │
-  │                 │  LookupWorker    │                 │
-  │                 │ ───────────────► │                 │
-  │                 │ ◄─────────────── │                 │
-  │                 │  ProcessTask     │                 │
-  │                 │ ────────────────────────────────► │
-  │                 │  accepted=false  │                 │
-  │                 │ ◄──────────────────────────────── │
-  │                 │  [Task bleibt QUEUED, erneuter     │
-  │                 │   Dispatch-Versuch beim nächsten   │
-  │                 │   Dispatcher-Zyklus]               │
+ Client          Dispatcher        Namensdienst       Worker (voll)
+    │                 │                  │                  │
+    │  PostTask       │                  │                  │
+    │ ──────────────► │                  │                  │
+    │                 │  LookupWorker    │                  │
+    │                 │ ───────────────► │                  │
+    │                 │ ◄─────────────── │                  │
+    │                 │  ProcessTask     │                  │
+    │                 │ ──────────────────────────────────► │
+    │                 │  accepted=false  │                  │
+    │                 │ ◄────────────────────────────────── │
+    │                 │  [Task bleibt QUEUED,               │
+    │                 │   erneuter Dispatch im              │
+    │                 │   nächsten Zyklus]                  │
 ```
 
 ---
@@ -323,22 +302,21 @@ Client          Dispatcher        Namensdienst      Worker (voll)
 #### Szenario C: Unbekannter Aufgabentyp
 
 ```
-Client          Dispatcher        Namensdienst
-  │                 │                  │
-  │  PostTask       │                  │
-  │  type="unknown" │                  │
-  │ ──────────────► │                  │
-  │                 │  LookupWorker    │
-  │                 │  type="unknown"  │
-  │                 │ ───────────────► │
-  │                 │  success=false,  │
-  │                 │  workers=[]      │
-  │                 │ ◄─────────────── │
-  │  success=false  │                  │
-  │  "no worker     │                  │
-  │   registered    │                  │
-  │   for type"     │                  │
-  │ ◄────────────── │                  │
+ Client          Dispatcher        Namensdienst
+    │                 │                  │
+    │  PostTask       │                  │
+    │  type="unknown" │                  │
+    │ ──────────────► │                  │
+    │                 │  LookupWorker    │
+    │                 │  type="unknown"  │
+    │                 │ ───────────────► │
+    │                 │  success=false,  │
+    │                 │  workers=[]      │
+    │                 │ ◄─────────────── │
+    │  success=false, │                  │
+    │  "kein Worker   │                  │
+    │   für Typ"      │                  │
+    │ ◄────────────── │                  │
 ```
 
 **Ergebnis:** Task wird nicht erstellt; Client erhält sofort eine Fehlermeldung.

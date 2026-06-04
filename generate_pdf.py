@@ -121,15 +121,26 @@ body {
 .title-page {
   page-break-after: always;
   text-align: center;
-  padding-top: 3.5cm;
+  padding-top: 6cm;
 }
-.title-logo { font-size: 44pt; font-weight: 700; color: #1a56a0; }
-.title-sub  { font-size: 13pt; color: #555; margin: 0.5cm 0 1.8cm; }
-.title-meta { margin: 0 auto 2cm; display: inline-block; }
-.title-meta table { border-collapse: collapse; }
-.title-meta th { text-align: right; padding: 3px 14px 3px 0; color: #777;
-                 font-weight: 600; font-size: 10pt; }
-.title-meta td { text-align: left; padding: 3px 0; font-size: 10pt; }
+.title-kicker {
+  font-size: 11pt; font-weight: 600; letter-spacing: 3px;
+  text-transform: uppercase; color: #6b7a90; margin-bottom: 18px;
+}
+.title-logo {
+  font-size: 52pt; font-weight: 700; color: #1a56a0;
+  letter-spacing: -1px; line-height: 1;
+}
+.title-rule {
+  width: 80px; height: 3px; background: #1a56a0;
+  margin: 22px auto 22px;
+}
+.title-sub  { font-size: 13.5pt; color: #444; margin-bottom: 4.5cm; }
+.title-meta { font-size: 11pt; color: #333; line-height: 2.1; }
+.title-meta .label { color: #6b7a90; font-weight: 600;
+                     display: inline-block; width: 90px; text-align: right;
+                     padding-right: 16px; }
+.title-meta .value { font-weight: 600; }
 
 /* ── ToC page ── */
 .toc-page { padding-top: 0.5cm; }
@@ -245,14 +256,14 @@ parts = [f"<html><head><meta charset='utf-8'><style>{CSS_STYLE}</style></head><b
 # Title page
 parts.append("""
 <div class="title-page">
+  <div class="title-kicker">Prüfungsaufgabe Verteilte Systeme</div>
   <div class="title-logo">TaskGrid+</div>
+  <div class="title-rule"></div>
   <div class="title-sub">Erweiterbares Aufgabenverarbeitungssystem in Containern</div>
   <div class="title-meta">
-    <table>
-      <tr><th>Kurs</th><td>Verteilte Systeme &mdash; TIK23</td></tr>
-      <tr><th>Dozent</th><td>Kevin Dallmann</td></tr>
-      <tr><th>Abgabe</th><td>08.06.2026</td></tr>
-    </table>
+    <div><span class="label">Kurs</span><span class="value">TIK23</span></div>
+    <div><span class="label">Dozent</span><span class="value">Kevin Dallmann</span></div>
+    <div><span class="label">Abgabe</span><span class="value">08.06.2026</span></div>
   </div>
 </div>
 """)

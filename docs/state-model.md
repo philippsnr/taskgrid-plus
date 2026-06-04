@@ -37,13 +37,13 @@
 
 ```
 CREATED ──► QUEUED ──► DISPATCHED ──► PROCESSING ──► COMPLETED
-                                   │
-                                   └──► PROCESSING ──► FAILED  (Worker-Fehler)
-                                            │
-                                        TIMEOUT ──► RETRYING ──► QUEUED  (retry < MAX)
-                                                 └──► FAILED              (retry >= MAX)
+                                          │
+                                          ├──► FAILED   (Worker meldet Fehler)
+                                          │
+                                          └──► TIMEOUT ──┬──► RETRYING ──► QUEUED   (retry < MAX)
+                                                         └──► FAILED               (retry ≥ MAX)
 
-QUEUED ──► FAILED  (kein alternativer Worker bei Retry)
+QUEUED ──► FAILED   (kein alternativer Worker bei Retry)
 ```
 
 ---
@@ -143,13 +143,12 @@ Konfiguration via Umgebungsvariable `TASK_TIMEOUT_SEC` (Standard: **60 Sekunden*
 TIMEOUT erkannt
     │
     ├── retry_count < MAX_RETRIES
-    │       │
     │       ├── retry_count += 1
     │       ├── last_failed_worker = timed_out_worker
     │       ├── assigned_worker = ""
     │       ├── timestamp_dispatched = 0
     │       ├── Status: RETRYING
-    │       └── Status: QUEUED  →  Task in Queue einreihen
+    │       └── Status: QUEUED   →   Task erneut einreihen
     │
     └── retry_count >= MAX_RETRIES
             └── Status: FAILED
