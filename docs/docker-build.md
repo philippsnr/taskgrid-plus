@@ -106,5 +106,3 @@ worker-sum-2:
     - nameservice
     - dispatcher
 ```
-
-Each worker must have a unique `WORKER_ID` and its `WORKER_ADDRESS` must match the Docker Compose service name so the dispatcher can route tasks to it.

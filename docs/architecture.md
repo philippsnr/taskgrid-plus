@@ -8,41 +8,41 @@ Das folgende Diagramm zeigt alle fünf Komponenten des Systems und ihre Kommunik
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                            Docker-Netzwerk                               │
 │                                                                          │
-│   ┌──────────┐   PostTask (gRPC)    ┌──────────────┐                    │
-│   │          │ ──────────────────► │              │                    │
-│   │  Client  │                      │  Dispatcher  │                    │
-│   │          │ ◄────────────────── │              │                    │
-│   └──────────┘   GetResult (gRPC)   └──────┬───┬──┘                    │
+│   ┌──────────┐   PostTask (gRPC)    ┌──────────────┐                     │
+│   │          │ ──────────────────► │              │                      │
+│   │  Client  │                      │  Dispatcher  │                     │
+│   │          │ ◄────────────────── │              │                      │
+│   └──────────┘   GetResult (gRPC)   └──────┬───┬──┘                      │
 │                                             │   ▲                        │
-│                                LookupWorker │   │ ReturnResult (gRPC)   │
+│                                LookupWorker │   │ ReturnResult (gRPC)    │
 │                                      (gRPC) │   │                        │
 │                                             ▼   │                        │
-│                                      ┌──────────────┐                   │
-│                                      │              │                   │
-│                                      │  Namensdienst│◄──────────────┐  │
-│                                      │              │               │  │
-│                                      └──────────────┘               │  │
-│                                             ▲                        │  │
-│                          Register/Heartbeat │                        │  │
-│                          Deregister (gRPC)  │                        │  │
-│                                             │                        │  │
-│   ┌──────────────────────────────────────────────────────────────┐   │  │
-│   │  Worker-Pool (skalierbar, ein Container pro Aufgabentyp)     │   │  │
-│   │                                                              │   │  │
-│   │  ┌────────────┐  ┌────────────┐  ┌────────────┐             │   │  │
-│   │  │ Worker     │  │ Worker     │  │ Worker     │  ...        │   │  │
-│   │  │ (reverse)  │  │ (sum)      │  │ (hash)     │             │   │  │
-│   │  └────────────┘  └────────────┘  └────────────┘             │   │  │
-│   │       ▲  │             ▲  │            ▲  │                  │   │  │
+│                                      ┌──────────────┐                    │
+│                                      │              │                    │
+│                                      │  Namensdienst│◄──────────────┐    │
+│                                      │              │               │    │
+│                                      └──────────────┘               │    │
+│                                             ▲                        │   │
+│                          Register/Heartbeat │                        │   │
+│                          Deregister (gRPC)  │                        │   │
+│                                             │                        │   │
+│   ┌──────────────────────────────────────────────────────────────┐   │   │
+│   │  Worker-Pool (skalierbar, ein Container pro Aufgabentyp)     │   │   │
+│   │                                                              │   │   │
+│   │  ┌────────────┐  ┌────────────┐  ┌────────────┐             │   │    │
+│   │  │ Worker     │  │ Worker     │  │ Worker     │  ...        │   │    │
+│   │  │ (reverse)  │  │ (sum)      │  │ (hash)     │             │   │    │
+│   │  └────────────┘  └────────────┘  └────────────┘             │   │    │
+│   │       ▲  │             ▲  │            ▲  │                  │   │   │
 │   └────────┼──┼─────────────┼──┼────────────┼──┼──────────────────┘   │  │
-│            │  │             │  │            │  │                        │  │
-│   ProcessTask │         ProcessTask │    ProcessTask │                  │  │
-│    (Dispatcher→Worker) │  (Dispatcher→Worker)  │                       │  │
+│            │  │             │  │            │  │                        ││
+│   ProcessTask │         ProcessTask │    ProcessTask │                  ││
+│    (Dispatcher→Worker) │  (Dispatcher→Worker)  │                       │ │
 │            │  └─────────────┘  └────────────┘  └──────────────────────┘  │
-│            └──── ReturnResult ──────────────────────────────────────────  │
+│            └──── ReturnResult ────────────────────────────────────────── │
 │                                                                          │
-│   ┌──────────────┐  GetDispatcherStatus / GetNameServiceStatus (gRPC)   │
-│   │  Monitoring  │ ─────────────────────────────────────────────────►   │
+│   ┌──────────────┐  GetDispatcherStatus / GetNameServiceStatus (gRPC)    │
+│   │  Monitoring  │ ─────────────────────────────────────────────────►    │
 │   │              │ ◄───── Status-Response ─────────────────────────────  │
 │   └──────────────┘                                                       │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -56,7 +56,7 @@ Client ──PostTask──► Dispatcher ──LookupWorker──► Namensdien
                          │ ProcessTask                  │ Register / Heartbeat
                          ▼                              │
                        Worker ────────────────────────►─┘
-                         │
+                                                        │
                          │ ReturnResult
                          ▼
                      Dispatcher ──GetResult──► Client
@@ -264,9 +264,9 @@ Client          Dispatcher        Namensdienst        Worker (abgestürzt)
   │                 │ ───────────────► │                 │
   │                 │ ◄─────────────── │                 │
   │                 │  ProcessTask     │                 │
-  │                 │ ────────────────────────────────► │
+  │                 │ ────────────────────────────────►  │
   │                 │  accepted=true   │                 │
-  │                 │ ◄──────────────────────────────── │
+  │                 │ ◄────────────────────────────────  │
   │  task_id=42     │                  │                 │
   │ ◄────────────── │                  │   [ABSTURZ]     │
   │                 │                  │                 ✗
@@ -282,9 +282,9 @@ Client          Dispatcher        Namensdienst        Worker (abgestürzt)
   │                 │ ◄─────────────── │                 │
   │                 │                  │  ┌──────────────┐
   │                 │  ProcessTask     │  │ Worker (neu) │
-  │                 │ ────────────────────────────────► │
+  │                 │ ────────────────────────────────►  │
   │                 │  ReturnResult    │                 │
-  │                 │ ◄──────────────────────────────── │
+  │                 │ ◄────────────────────────────────  │
   │  GetResult      │                  │                 │
   │ ──────────────► │                  │                 │
   │  status=COMPLETED, result="..."    │                 │

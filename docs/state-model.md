@@ -9,27 +9,27 @@
    Client.PostTask()      │                                                         │
         │                 │                                                         │
         ▼                 │                                                         │
-    [CREATED]─────────────────────────────────────────────────────────────────────►│
+    [CREATED]─────────────────────────────────────────────────────────────────────► │
         │  (Validierung ok)                                                         │
         ▼                 │                                                         │
-    [QUEUED] ◄────────────────── RETRYING ◄─────────────────────────────────────── │
+    [QUEUED] ◄────────────────── RETRYING ◄───────────────────────────────────────  │
         │  (Dispatch-Loop             │                                             │
         │   wählt Worker)             │                                             │
         ▼                 │           │                                             │
-   [DISPATCHED]           │       [TIMEOUT] ◄─── Timeout-Checker (alle 5s)         │
+   [DISPATCHED]           │       [TIMEOUT] ◄─── Timeout-Checker (alle 5s)          │
         │  (Worker nimmt             │    retry_count <             retry_count >=  │
         │   Task an)      │          │    MAX_RETRIES               MAX_RETRIES     │
-        ▼                 │          │                                   │           │
-   [PROCESSING]           │          │                               [FAILED]        │
-        │  (Worker meldet            └───────────────────────────────────┘           │
+        ▼                 │          │                                   │          │
+   [PROCESSING]           │          │                               [FAILED]       │
+        │  (Worker meldet            └───────────────────────────────────┘          │
         │   Ergebnis)     │                                                         │
-        ├──(success=true)─────────────────────────────────────────────────────────►│
+        ├──(success=true)─────────────────────────────────────────────────────────► │
         │                 │   [COMPLETED]                                           │
-        └──(success=false)────────────────────────────────────────────────────────►│
+        └──(success=false)────────────────────────────────────────────────────────► │
                           │   [FAILED]                                              │
                           │                                                         │
-                          │  Sonderfälle (kein Worker verfügbar):                  │
-                          │  [QUEUED] ──(kein Worker, retry_count > 0)──► [FAILED] │
+                          │  Sonderfälle (kein Worker verfügbar):                   │
+                          │  [QUEUED] ──(kein Worker, retry_count > 0)──► [FAILED]  │
                           └─────────────────────────────────────────────────────────┘
 ```
 

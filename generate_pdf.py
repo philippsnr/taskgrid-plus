@@ -19,18 +19,8 @@ MD_EXT = ["fenced_code", "tables", "sane_lists"]
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
-def fix_pre_unicode(html: str) -> str:
-    """Replace wide Unicode arrows in <pre> blocks with ASCII equivalents."""
-    def _fix(m):
-        code = m.group(1)
-        code = code.replace("►", "&gt;").replace("◄", "&lt;")
-        code = code.replace("▶", "&gt;").replace("◀", "&lt;")
-        code = code.replace("▼", "v").replace("▲", "^")
-        return f"<pre>{code}</pre>"
-    return re.sub(r"<pre>(.*?)</pre>", _fix, html, flags=re.DOTALL)
-
 def md(text: str) -> str:
-    return fix_pre_unicode(markdown.markdown(text, extensions=MD_EXT))
+    return markdown.markdown(text, extensions=MD_EXT)
 
 def drop_sections(text: str, headings: list[str]) -> str:
     """Remove h2 sections whose title starts with one of the given strings."""
