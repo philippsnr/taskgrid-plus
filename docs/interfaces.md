@@ -365,22 +365,3 @@ WORKER_ID=worker-mytype-1 WORKER_TYPE=mytype python worker/main.py
 # Via Docker Compose:
 docker compose up --scale worker-mytype=2
 ```
-
-### Was beim Start passiert
-
-1. Worker liest `WORKER_TYPE=mytype` aus der Umgebung.
-2. Worker sendet `RegisterWorker(type="mytype", ...)` an den Namensdienst.
-3. Namensdienst speichert den Worker in seiner Registry.
-4. Dispatcher findet den neuen Worker beim nächsten `LookupWorker(type="mytype")`.
-5. Client kann sofort `PostTask(type="mytype", payload="...")` senden.
-
-### Welche Komponenten müssen geändert werden?
-
-| Komponente | Änderung nötig? |
-|------------|----------------|
-| `worker/handlers.py` | Ja — Handler hinzufügen |
-| `docker-compose.yml` | Optional — neuen Worker-Service eintragen |
-| Dispatcher | **Nein** |
-| Namensdienst | **Nein** |
-| Client | **Nein** |
-| Proto-Schema | **Nein** |
