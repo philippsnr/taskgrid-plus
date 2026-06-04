@@ -1,6 +1,17 @@
 volumes:
   dispatcher-logs:
 
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.89.0.0/24
+
+x-extra-hosts: &extra-hosts
+  extra_hosts:
+    - "nameservice:10.89.0.10"
+    - "dispatcher:10.89.0.11"
+
 services:
   nameservice:
     build:
@@ -8,10 +19,14 @@ services:
       dockerfile: nameservice/Dockerfile
     environment:
       - NAMESERVICE_PORT=50052
+      - GRPC_DNS_RESOLVER=native
     ports:
       - "50052:50052"
+    networks:
+      default:
+        ipv4_address: 10.89.0.10
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 50052), timeout=5)"]
+      test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost', 50052), timeout=5)\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -26,15 +41,20 @@ services:
       - NAMESERVICE_ADDR=nameservice:50052
       - TASK_TIMEOUT_SEC=60
       - MAX_RETRIES=3
+      - GRPC_DNS_RESOLVER=native
     ports:
       - "50051:50051"
     volumes:
       - dispatcher-logs:/app/logs
+    networks:
+      default:
+        ipv4_address: 10.89.0.11
+    <<: *extra-hosts
     depends_on:
       nameservice:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 50051), timeout=5)"]
+      test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost', 50051), timeout=5)\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -52,6 +72,8 @@ services:
       - DISPATCHER_ADDRESS=dispatcher
       - DISPATCHER_PORT=50051
       - HEARTBEAT_INTERVAL_SEC=10
+      - GRPC_DNS_RESOLVER=native
+    <<: *extra-hosts
     depends_on:
       nameservice:
         condition: service_healthy
@@ -70,6 +92,8 @@ services:
       - DISPATCHER_ADDRESS=dispatcher
       - DISPATCHER_PORT=50051
       - HEARTBEAT_INTERVAL_SEC=10
+      - GRPC_DNS_RESOLVER=native
+    <<: *extra-hosts
     depends_on:
       nameservice:
         condition: service_healthy
@@ -88,6 +112,8 @@ services:
       - DISPATCHER_ADDRESS=dispatcher
       - DISPATCHER_PORT=50051
       - HEARTBEAT_INTERVAL_SEC=10
+      - GRPC_DNS_RESOLVER=native
+    <<: *extra-hosts
     depends_on:
       nameservice:
         condition: service_healthy
@@ -106,6 +132,8 @@ services:
       - DISPATCHER_ADDRESS=dispatcher
       - DISPATCHER_PORT=50051
       - HEARTBEAT_INTERVAL_SEC=10
+      - GRPC_DNS_RESOLVER=native
+    <<: *extra-hosts
     depends_on:
       nameservice:
         condition: service_healthy
@@ -124,6 +152,8 @@ services:
       - DISPATCHER_ADDRESS=dispatcher
       - DISPATCHER_PORT=50051
       - HEARTBEAT_INTERVAL_SEC=10
+      - GRPC_DNS_RESOLVER=native
+    <<: *extra-hosts
     depends_on:
       nameservice:
         condition: service_healthy
@@ -138,6 +168,8 @@ services:
       - DISPATCHER_ADDR=dispatcher:50051
       - NAMESERVICE_ADDR=nameservice:50052
       - WATCH_INTERVAL_SEC=5
+      - GRPC_DNS_RESOLVER=native
+    <<: *extra-hosts
     depends_on:
       dispatcher:
         condition: service_healthy
@@ -151,6 +183,8 @@ services:
     environment:
       - DISPATCHER_HOST=dispatcher
       - DISPATCHER_PORT=50051
+      - GRPC_DNS_RESOLVER=native
+    <<: *extra-hosts
     depends_on:
       dispatcher:
         condition: service_healthy
