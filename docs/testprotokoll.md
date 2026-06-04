@@ -19,6 +19,10 @@
 Alle 5 Worker wurden beim Nameservice registriert.  
 **Dispatcher-Status vor dem Test:** `workers_registered=5`, `workers_active=5`, `tasks_completed=0`
 
+## Testablauf und Ergebnisse
+
+![Testablauf — alle 6 Tasks erfolgreich abgeschlossen](img/screenshot-successful-tests.png)
+
 ---
 
 ## Testfälle
@@ -278,3 +282,5 @@ avg_processing_ms  : 340.0
 total_timeouts     : 0
 total_retries      : 0
 ```
+
+![Dispatcher-Status nach dem Test](img/screenshot-dispatcher-status.png)
